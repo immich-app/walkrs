@@ -1,0 +1,36 @@
+# Rust formatting configuration to match TypeScript style
+edition = "2021"
+
+# Use 2 spaces for indentation (matching prettier)
+hard_tabs = false
+tab_spaces = 2
+
+# Match prettier's printWidth of 120
+max_width = 120
+
+# Formatting options
+newline_style = "Unix"
+use_small_heuristics = "Default"
+reorder_imports = true
+reorder_modules = true
+remove_nested_parens = true
+
+# Function and type formatting
+fn_single_line = false
+where_single_line = false
+
+# Import formatting
+imports_granularity = "Crate"
+
+# Trailing comma (matching prettier's trailingComma: all)
+trailing_comma = "Vertical"
+
+# Comment formatting
+wrap_comments = false
+format_code_in_doc_comments = false
+normalize_comments = false
+
+# Misc
+format_strings = false
+format_macro_matchers = true
+format_macro_bodies = true
