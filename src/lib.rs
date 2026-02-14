@@ -1,3 +1,6 @@
+mod async_iter;
+mod stream;
+
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use std::sync::Arc;
