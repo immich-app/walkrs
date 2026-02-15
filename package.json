@@ -1,6 +1,6 @@
 {
   "name": "@immich/walkrs",
-  "version": "0.0.1",
+  "version": "0.0.0",
   "description": "Fast file tree walker for Node.js, built with ripgrep's ignore crate",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
