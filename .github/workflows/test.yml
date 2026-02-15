@@ -1,4 +1,4 @@
-name: Lint & Format
+name: Test
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ permissions: {}
 
 jobs:
   format-lint:
-    name: Lint & Format
+    name: Lint, format, test
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -32,9 +32,21 @@ jobs:
           components: clippy, rustfmt
       - name: Install dependencies
         run: pnpm install
-      - name: Check linting
+      - name: Check rust linting
         run: pnpm rust:lint
         if: ${{ !cancelled() }}
-      - name: Check formatting
+      - name: Check rust formatting
         run: pnpm rust:format
+        if: ${{ !cancelled() }}
+      - name: Check ts linting
+        run: pnpm ts:lint
+        if: ${{ !cancelled() }}
+      - name: Check ts formatting
+        run: pnpm ts:format
+        if: ${{ !cancelled() }}
+      - name: Build
+        run: pnpm build
+        if: ${{ !cancelled() }}
+      - name: Run tests
+        run: pnpm test
         if: ${{ !cancelled() }}
