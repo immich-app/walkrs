@@ -16,6 +16,9 @@ pub struct WalkOptions {
 
   #[napi(ts_type = "string[] | undefined")]
   pub extensions: Option<Vec<String>>,
+
+  #[napi(ts_type = "boolean | undefined")]
+  pub benchmark: Option<bool>,
 }
 
 #[napi(ts_return_type = "Promise<string[]>")]
@@ -28,8 +31,9 @@ pub async fn walk(options: WalkOptions) -> Result<Vec<String>> {
   let include_hidden = options.include_hidden.unwrap_or(false);
   let exclusion_patterns = options.exclusion_patterns.unwrap_or_default();
   let extensions = options.extensions.unwrap_or_default();
+  let benchmark = options.benchmark.unwrap_or(false);
 
-  tokio::task::spawn_blocking(move || find_files(&root_paths, include_hidden, &exclusion_patterns, &extensions))
+  tokio::task::spawn_blocking(move || find_files(&root_paths, include_hidden, &exclusion_patterns, &extensions, benchmark))
     .await
     .map_err(|e| Error::new(Status::GenericFailure, format!("Task join error: {}", e)))?
 }
@@ -77,6 +81,7 @@ fn find_files(
   include_hidden: bool,
   exclusion_patterns: &[String],
   extensions: &[String],
+  benchmark: bool,
 ) -> Result<Vec<String>> {
   let mut exclusion_set = globset::GlobSetBuilder::new();
   for pattern in exclusion_patterns {
@@ -155,9 +160,11 @@ fn find_files(
         return ignore::WalkState::Continue;
       }
 
-      if batch_sender.send(path.to_string_lossy().into_owned()).is_err() {
-        quit_flag.store(true, Ordering::Relaxed);
-        return ignore::WalkState::Quit;
+      if !benchmark {
+        if batch_sender.send(path.to_string_lossy().into_owned()).is_err() {
+          quit_flag.store(true, Ordering::Relaxed);
+          return ignore::WalkState::Quit;
+        }
       }
       ignore::WalkState::Continue
     })

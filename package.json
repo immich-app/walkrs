@@ -18,14 +18,14 @@
   "napi": {
     "binaryName": "walkrs",
     "targets": [
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin",
-        "aarch64-unknown-linux-gnu",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-musl",
-        "x86_64-unknown-linux-musl",
-        "x86_64-pc-windows-msvc"
-      ],
+      "aarch64-apple-darwin",
+      "x86_64-apple-darwin",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-musl",
+      "x86_64-unknown-linux-musl",
+      "x86_64-pc-windows-msvc"
+    ],
     "package": {
       "name": "@immich/walkrs"
     }
@@ -49,7 +49,9 @@
     "rust:format:fix": "cargo fmt",
     "rust:lint": "cargo clippy --all-targets --all-features -- -D warnings",
     "format": "pnpm run ts:format && pnpm run rust:format",
-    "format:fix": "pnpm run ts:format:fix && pnpm run rust:format:fix"
+    "format:fix": "pnpm run ts:format:fix && pnpm run rust:format:fix",
+    "bench:setup": "node --import tsx bench/setup.ts",
+    "bench": "node --import tsx bench/bench.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.8.0",
