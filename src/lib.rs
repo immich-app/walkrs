@@ -1,7 +1,18 @@
+mod batch_sender;
+mod extension_filter;
+
+use std::path::Path;
+use std::sync::Arc;
+
+use globset::{GlobSet, GlobSetBuilder};
+use ignore::{DirEntry, WalkBuilder, WalkState};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use tokio::sync::Mutex;
+use tokio::sync::mpsc::{self, UnboundedSender};
+
+use batch_sender::BatchSender;
+use extension_filter::ExtensionFilter;
 
 #[napi(object)]
 pub struct WalkOptions {
@@ -18,157 +29,121 @@ pub struct WalkOptions {
   pub extensions: Option<Vec<String>>,
 }
 
-#[napi(ts_return_type = "Promise<string[]>")]
-pub async fn walk(options: WalkOptions) -> Result<Vec<String>> {
+#[napi(async_iterator)]
+pub struct Walk {
+  rx: Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>,
+}
+
+impl napi::bindgen_prelude::AsyncGenerator for Walk {
+  type Yield = Buffer;
+  type Next = ();
+  type Return = ();
+
+  fn next(
+    &mut self,
+    _value: Option<Self::Next>,
+  ) -> impl std::future::Future<Output = Result<Option<Self::Yield>>> + Send + 'static {
+    let rx = Arc::clone(&self.rx);
+    async move { Ok(rx.lock().await.recv().await.map(Into::into)) }
+  }
+}
+
+#[napi]
+pub fn walk(options: WalkOptions) -> Result<Walk> {
+  let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
+
   if options.paths.is_empty() {
-    return Ok(Vec::new());
+    return Ok(Walk {
+      rx: Arc::new(Mutex::new(rx)),
+    });
   }
 
-  let root_paths = options.paths.clone();
-  let include_hidden = options.include_hidden.unwrap_or(false);
-  let exclusion_patterns = options.exclusion_patterns.unwrap_or_default();
-  let extensions = options.extensions.unwrap_or_default();
+  let exclusion_set = Arc::new(build_exclusion_set(&options.exclusion_patterns.unwrap_or_default())?);
+  let extension_set = Arc::new(ExtensionFilter::new(&options.extensions.unwrap_or_default()));
 
-  tokio::task::spawn_blocking(move || find_files(&root_paths, include_hidden, &exclusion_patterns, &extensions))
-    .await
-    .map_err(|e| Error::new(Status::GenericFailure, format!("Task join error: {}", e)))?
-}
-
-struct BatchSender {
-  batch: Vec<String>,
-  tx: std::sync::mpsc::Sender<Vec<String>>,
-  limit: usize,
-}
-
-impl BatchSender {
-  fn new(tx: std::sync::mpsc::Sender<Vec<String>>, limit: usize) -> Self {
-    Self {
-      batch: Vec::with_capacity(limit),
-      tx,
-      limit,
-    }
+  let mut walk_builder = WalkBuilder::new(&options.paths[0]);
+  for path in &options.paths[1..] {
+    walk_builder.add(path);
   }
 
-  fn send(&mut self, item: String) -> std::result::Result<(), ()> {
-    self.batch.push(item);
-    if self.batch.len() >= self.limit {
-      self.flush()?;
-    }
-    Ok(())
-  }
-
-  fn flush(&mut self) -> std::result::Result<(), ()> {
-    if !self.batch.is_empty() {
-      let batch = std::mem::replace(&mut self.batch, Vec::with_capacity(self.limit));
-      self.tx.send(batch).map_err(|_| ())?;
-    }
-    Ok(())
-  }
-}
-
-impl Drop for BatchSender {
-  fn drop(&mut self) {
-    let _ = self.flush();
-  }
-}
-
-fn find_files(
-  root_paths: &[String],
-  include_hidden: bool,
-  exclusion_patterns: &[String],
-  extensions: &[String],
-) -> Result<Vec<String>> {
-  let mut exclusion_set = globset::GlobSetBuilder::new();
-  for pattern in exclusion_patterns {
-    if let Ok(glob) = globset::Glob::new(pattern) {
-      exclusion_set.add(glob);
-    }
-  }
-  let exclusion_set = match exclusion_set.build() {
-    Ok(set) => set,
-    Err(e) => {
-      eprintln!("Error building exclusion patterns: {}", e);
-      globset::GlobSetBuilder::new().build().unwrap()
-    }
-  };
-  let exclusion_set = Arc::new(exclusion_set);
-
-  let ext_set: std::collections::HashSet<String> = extensions
-    .iter()
-    .map(|ext| ext.strip_prefix('.').unwrap_or(ext).to_lowercase())
-    .collect();
-  let ext_set = Arc::new(ext_set);
-
-  let (tx, rx) = std::sync::mpsc::channel::<Vec<String>>();
-  let quit_flag = Arc::new(AtomicBool::new(false));
-
-  let mut walker_builder = ignore::WalkBuilder::new(&root_paths[0]);
-  for path in &root_paths[1..] {
-    walker_builder.add(path);
-  }
-
-  let walker = walker_builder
+  let walker = walk_builder
     .git_ignore(false)
-    .hidden(!include_hidden)
+    .hidden(!options.include_hidden.unwrap_or(false))
     .parents(false)
     .ignore(false)
     .git_global(false)
     .git_exclude(false)
     .build_parallel();
 
-  walker.run(|| {
-    let tx = tx.clone();
-    let quit_flag = quit_flag.clone();
-    let exclusion_set = Arc::clone(&exclusion_set);
-    let ext_set = Arc::clone(&ext_set);
-    let mut batch_sender = BatchSender::new(tx, 256);
+  std::thread::spawn(move || walker.run(|| visit(tx.clone(), Arc::clone(&exclusion_set), Arc::clone(&extension_set))));
 
-    Box::new(move |entry_result| {
-      if quit_flag.load(Ordering::Relaxed) {
-        return ignore::WalkState::Quit;
-      }
+  Ok(Walk {
+    rx: Arc::new(Mutex::new(rx)),
+  })
+}
 
-      let Ok(entry) = entry_result else {
-        return ignore::WalkState::Continue;
-      };
-
-      let path = entry.path();
-
-      if !exclusion_set.is_empty() && !exclusion_set.matches(path).is_empty() {
-        return ignore::WalkState::Skip;
-      }
-
-      let Some(file_type) = entry.file_type() else {
-        return ignore::WalkState::Continue;
-      };
-
-      if !file_type.is_file() {
-        return ignore::WalkState::Continue;
-      }
-
-      if !ext_set.is_empty()
-        && !path
-          .extension()
-          .and_then(|e| e.to_str())
-          .is_some_and(|ext| ext_set.contains(&ext.to_lowercase()))
-      {
-        return ignore::WalkState::Continue;
-      }
-
-      if batch_sender.send(path.to_string_lossy().into_owned()).is_err() {
-        quit_flag.store(true, Ordering::Relaxed);
-        return ignore::WalkState::Quit;
-      }
-      ignore::WalkState::Continue
-    })
-  });
-
-  drop(tx);
-
-  let mut all_files = Vec::new();
-  while let Ok(batch) = rx.recv() {
-    all_files.extend(batch);
+fn build_exclusion_set(exclusion_patterns: &[String]) -> Result<GlobSet> {
+  let mut builder = GlobSetBuilder::new();
+  for pattern in exclusion_patterns {
+    builder.add(
+      globset::GlobBuilder::new(pattern)
+        .case_insensitive(true)
+        .build()
+        .map_err(|e| {
+          Error::new(
+            Status::InvalidArg,
+            format!("Invalid exclusion pattern '{pattern}': {e}"),
+          )
+        })?,
+    );
   }
+  builder
+    .build()
+    .map_err(|e| Error::new(Status::InvalidArg, format!("Failed to build exclusion patterns: {e}")))
+}
 
-  Ok(all_files)
+fn visit(
+  tx: UnboundedSender<Vec<u8>>,
+  exclusion_set: Arc<GlobSet>,
+  extension_filter: Arc<ExtensionFilter>,
+) -> Box<dyn FnMut(std::result::Result<DirEntry, ignore::Error>) -> WalkState + Send> {
+  let mut batch_sender = BatchSender::new(tx);
+
+  Box::new(move |entry_result| {
+    let Ok(entry) = entry_result else {
+      return WalkState::Continue;
+    };
+
+    let Some(ft) = entry.file_type() else {
+      return WalkState::Continue;
+    };
+
+    let path: &Path = entry.path();
+
+    if exclusion_set.is_match(path) {
+      return if ft.is_dir() {
+        WalkState::Skip
+      } else {
+        WalkState::Continue
+      };
+    }
+
+    if !ft.is_file() {
+      return WalkState::Continue;
+    }
+
+    if !extension_filter.is_match(path) {
+      return WalkState::Continue;
+    }
+
+    let Ok(path) = entry.into_path().into_os_string().into_string() else {
+      return WalkState::Continue;
+    };
+
+    if batch_sender.send(path).is_err() {
+      return WalkState::Quit;
+    }
+
+    WalkState::Continue
+  })
 }
