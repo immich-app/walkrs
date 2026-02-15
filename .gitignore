@@ -14,5 +14,5 @@ Cargo.lock
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-*.tgz
+immich-walkrs-*.tgz
 bench/datasets

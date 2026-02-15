@@ -1,7 +1,8 @@
 {
   "name": "@immich/walkrs",
-  "version": "0.0.1",
+  "version": "0.0.0",
   "description": "Fast file tree walker for Node.js, built with ripgrep's ignore crate",
+  "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "packageManager": "pnpm@10.28.0+sha512.05df71d1421f21399e053fde567cea34d446fa02c76571441bfc1c7956e98e363088982d940465fd34480d4d90a0668bc12362f8aa88000a64e83d0b0e47be48",
@@ -35,16 +36,16 @@
     "dist"
   ],
   "scripts": {
-    "build": "napi build --platform --release --output-dir dist",
-    "build:debug": "napi build --platform --debug --output-dir dist",
-    "build:release": "napi build --platform --release --output-dir dist",
+    "build": "napi build --platform --release --esm -o dist",
+    "build:debug": "napi build --platform --esm -o dist",
+    "build:release": "napi build --platform --release --esm -o dist",
     "prepublishOnly": "pnpm run build:release",
-    "test": "node --loader tsx ./test.ts",
+    "test": "vitest --config test/vitest.config.mjs",
     "typecheck": "tsc --noEmit",
     "ts:check": "tsc --noEmit",
     "ts:format": "prettier --check .",
     "ts:format:fix": "prettier --write .",
-    "ts:lint": "eslint \"src/**/*.ts\" --max-warnings 0",
+    "ts:lint": "eslint \"test/**/*.ts\" --max-warnings 0",
     "rust:format": "cargo fmt -- --check",
     "rust:format:fix": "cargo fmt",
     "rust:lint": "cargo clippy --all-targets --all-features -- -D warnings",
@@ -55,19 +56,22 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.8.0",
+    "@napi-rs/cli": "^3.5.1",
+    "@types/node": "^24.10.11",
     "eslint": "^9.14.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.1.3",
     "eslint-plugin-unicorn": "^62.0.0",
-    "@napi-rs/cli": "^3.0.0",
-    "@types/node": "^24.10.11",
     "globals": "^16.0.0",
     "prettier": "^3.7.4",
     "prettier-plugin-organize-imports": "^4.0.0",
     "prettier-plugin-rust": "^0.1.9",
     "typescript-eslint": "^8.28.0",
+    "vitest": "^4.0.0",
     "tsx": "^4.7.0",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "unplugin-swc": "^1.4.5",
+    "vite-tsconfig-paths": "^6.0.0"
   },
   "volta": {
     "node": "24.13.0"

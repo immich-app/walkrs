@@ -6,15 +6,16 @@
     "declaration": true,
     "declarationDir": "./dist",
     "outDir": "./dist",
-    "rootDir": ".",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "moduleResolution": "bundler",
-    "allowSyntheticDefaultImports": true
+    "allowSyntheticDefaultImports": true,
+    "baseUrl": ".",
+    "rootDir": "."
   },
-  "include": ["test/**/*.ts", "bench/**/*.ts"],
-  "exclude": ["node_modules", "dist", "target"]
+  "include": ["test/**/*.ts", "bench/**/*.ts", "types/**/*.d.ts"],
+  "exclude": ["node_modules", "dist", "target", "bench/datasets"]
 }

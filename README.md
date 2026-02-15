@@ -20,16 +20,26 @@ pnpm add @immich/walkrs
 import { walk } from '@immich/walkrs';
 
 // Simple usage - walk a directory
-const files = await walk({
-  root_paths: ['/path/to/scan'],
-});
+const files: string[] = [];
+for await (const batch of walk({ paths: ['/path/to/scan'] })) {
+  files.push(...JSON.parse(batch));
+}
 
 // Advanced usage with filtering
-const photos = await walk({
-  root_paths: ['/photos', '/backup/photos'],
-  supported_extensions: ['.jpg', '.png', '.heic', '.webp'],
-  exclusion_patterns: ['**/.stfolder/**'],
-  include_hidden: false,
+const photos: string[] = [];
+for await (const batch of walk({
+  paths: ['/photos', '/backup/photos'],
+  extensions: ['.jpg', '.png', '.heic', '.webp'],
+  exclusionPatterns: ['**/.stfolder/**'],
+  includeHidden: false,
+})) {
+  photos.push(...JSON.parse(batch));
+}
+
+// Benchmarking mode - skip returning results to Node.js
+await walk({
+  paths: ['/photos'],
+  benchmark: true,
 });
 ```
 
