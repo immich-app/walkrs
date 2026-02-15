@@ -16,9 +16,8 @@
     }
   },
   "napi": {
-    "name": "walkrs",
-    "triples": {
-      "additional": [
+    "binaryName": "walkrs",
+    "targets": [
         "aarch64-apple-darwin",
         "x86_64-apple-darwin",
         "aarch64-unknown-linux-gnu",
@@ -26,8 +25,7 @@
         "aarch64-unknown-linux-musl",
         "x86_64-unknown-linux-musl",
         "x86_64-pc-windows-msvc"
-      ]
-    },
+      ],
     "package": {
       "name": "@immich/walkrs"
     }
@@ -37,9 +35,9 @@
     "dist"
   ],
   "scripts": {
-    "build": "napi build --platform --release dist",
-    "build:debug": "napi build --platform --debug dist",
-    "build:release": "napi build --platform --release dist",
+    "build": "napi build --platform --release --output-dir dist",
+    "build:debug": "napi build --platform --debug --output-dir dist",
+    "build:release": "napi build --platform --release --output-dir dist",
     "prepublishOnly": "pnpm run build:release",
     "test": "node --loader tsx ./test.ts",
     "typecheck": "tsc --noEmit",
@@ -59,7 +57,7 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.1.3",
     "eslint-plugin-unicorn": "^62.0.0",
-    "@napi-rs/cli": "^2.18.0",
+    "@napi-rs/cli": "^3.0.0",
     "@types/node": "^24.10.11",
     "globals": "^16.0.0",
     "prettier": "^3.7.4",
