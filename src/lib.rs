@@ -80,7 +80,7 @@ fn find_files(
 ) -> Result<Vec<String>> {
   let mut exclusion_set = globset::GlobSetBuilder::new();
   for pattern in exclusion_patterns {
-    if let Ok(glob) = globset::Glob::new(pattern) {
+    if let Ok(glob) = globset::GlobBuilder::new(pattern).case_insensitive(true).build() {
       exclusion_set.add(glob);
     }
   }

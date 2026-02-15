@@ -41,12 +41,12 @@
     "build:debug": "napi build --platform --debug dist",
     "build:release": "napi build --platform --release dist",
     "prepublishOnly": "pnpm run build:release",
-    "test": "node --loader tsx ./test.ts",
+    "test": "vitest --config test/vitest.config.mjs",
     "typecheck": "tsc --noEmit",
     "ts:check": "tsc --noEmit",
     "ts:format": "prettier --check .",
     "ts:format:fix": "prettier --write .",
-    "ts:lint": "eslint \"src/**/*.ts\" --max-warnings 0",
+    "ts:lint": "eslint \"test/**/*.ts\" --max-warnings 0",
     "rust:format": "cargo fmt -- --check",
     "rust:format:fix": "cargo fmt",
     "rust:lint": "cargo clippy --all-targets --all-features -- -D warnings",
@@ -66,8 +66,11 @@
     "prettier-plugin-organize-imports": "^4.0.0",
     "prettier-plugin-rust": "^0.1.9",
     "typescript-eslint": "^8.28.0",
+    "vitest": "^4.0.0",
     "tsx": "^4.7.0",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "unplugin-swc": "^1.4.5",
+    "vite-tsconfig-paths": "^6.0.0"
   },
   "volta": {
     "node": "24.13.0"
