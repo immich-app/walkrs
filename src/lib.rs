@@ -34,7 +34,7 @@ pub struct Walk {
   rx: Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>,
 }
 
-impl napi::bindgen_prelude::AsyncGenerator for Walk {
+impl AsyncGenerator for Walk {
   type Yield = Buffer;
   type Next = ();
   type Return = ();
