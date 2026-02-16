@@ -40,3 +40,40 @@ for await (const batch of walk({
 ## Performance
 
 walkrs is designed to handle massive directory trees efficiently. It is greatly affected by multithreading: In benchmarks we have scanned 11M files in under 30 seconds over NFS on a machine with 32 CPU threads available. When restricting walkrs to a single thread, the time for the same task goes up to 208 seconds. Compare this with the single-threaded fast-glob which uses 360 seconds for the same task.
+
+## Benchmarking
+
+Since performance is critical, we provide dedicated benchmark scripts.
+
+### Setup
+
+Before running benchmarks, you need to create benchmark datasets. This is a one-time setup that generates test directories with various file counts. **Note: This can take several minutes to complete depending on your system.**
+
+```bash
+pnpm run bench:setup
+```
+
+This creates datasets in the `bench/datasets/` directory:
+
+- `10` - 10 files
+- `100` - 100 files
+- `1k` - 1,000 files
+- `10k` - 10,000 files
+- `100k` - 100,000 files
+- `1m` - 1,000,000 files
+- `10m` - 10,000,000 files
+
+### Running Benchmarks
+
+Run benchmarks against any dataset:
+
+```bash
+# Run with default settings on all datasets
+pnpm run ts:bench
+
+# Run on a specific dataset
+pnpm run ts:bench 1m
+
+# Run multiple datasets
+pnpm run ts:bench 100 10k 1m
+```

@@ -14,10 +14,8 @@
     "moduleResolution": "bundler",
     "allowSyntheticDefaultImports": true,
     "baseUrl": ".",
-    "paths": {
-      "@immich/walkrs": ["./dist/index.d.ts"]
-    }
+    "rootDir": "."
   },
-  "include": ["test/**/*.ts"],
-  "exclude": ["node_modules", "dist"]
+  "include": ["test/**/*.ts", "bench/**/*.ts", "types/**/*.d.ts"],
+  "exclude": ["node_modules", "dist", "target", "bench/datasets"]
 }

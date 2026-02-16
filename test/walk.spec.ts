@@ -219,7 +219,11 @@ describe('walk', () => {
           paths: options.paths.map((p: string) => path.join(tempDir, p.replace(/^\//, ''))),
         };
 
-        const actual = await walk(adjustedOptions);
+        const actual: string[] = [];
+        const iterable = walk(adjustedOptions) as unknown as AsyncIterable<Buffer>;
+        for await (const batch of iterable) {
+          actual.push(...JSON.parse(batch.toString()));
+        }
         const expected = Object.entries(files)
           .filter((entry) => entry[1])
           .map(([file]) => path.join(tempDir, file.replace(/^\//, '')));

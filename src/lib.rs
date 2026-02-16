@@ -27,6 +27,9 @@ pub struct WalkOptions {
 
   #[napi(ts_type = "string[] | undefined")]
   pub extensions: Option<Vec<String>>,
+
+  #[napi(ts_type = "number | undefined")]
+  pub threads: Option<u32>,
 }
 
 #[napi(async_iterator)]
@@ -34,6 +37,7 @@ pub struct Walk {
   rx: Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>,
 }
 
+#[napi]
 impl AsyncGenerator for Walk {
   type Yield = Buffer;
   type Next = ();
@@ -66,14 +70,18 @@ pub fn walk(options: WalkOptions) -> Result<Walk> {
     walk_builder.add(path);
   }
 
-  let walker = walk_builder
+  let threads = options.threads.unwrap_or(0);
+
+  walk_builder
     .git_ignore(false)
     .hidden(!options.include_hidden.unwrap_or(false))
     .parents(false)
     .ignore(false)
+    .threads(threads as usize)
     .git_global(false)
-    .git_exclude(false)
-    .build_parallel();
+    .git_exclude(false);
+
+  let walker = walk_builder.build_parallel();
 
   std::thread::spawn(move || walker.run(|| visit(tx.clone(), Arc::clone(&exclusion_set), Arc::clone(&extension_set))));
 
