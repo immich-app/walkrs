@@ -15,7 +15,7 @@ export default typescriptEslint.config([
   js.configs.recommended,
   typescriptEslint.configs.recommended,
   {
-    ignores: ['eslint.config.mjs', 'dist/**'],
+    ignores: ['eslint.config.mjs', 'dist/**', 'bench/datasets/**'],
   },
   {
     languageOptions: {

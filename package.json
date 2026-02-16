@@ -45,14 +45,14 @@
     "ts:check": "tsc --noEmit",
     "ts:format": "prettier --check .",
     "ts:format:fix": "prettier --write .",
-    "ts:lint": "eslint \"test/**/*.ts\" --max-warnings 0",
+    "ts:lint": "eslint \"test/**/*.ts\" \"bench/**/*.ts\" --max-warnings 0",
     "rust:format": "cargo fmt -- --check",
     "rust:format:fix": "cargo fmt",
     "rust:lint": "cargo clippy --all-targets --all-features -- -D warnings",
     "format": "pnpm run ts:format && pnpm run rust:format",
     "format:fix": "pnpm run ts:format:fix && pnpm run rust:format:fix",
     "bench:setup": "node --import tsx bench/setup.ts",
-    "bench": "node --import tsx bench/bench.ts"
+    "ts:bench": "node --import tsx bench/bench.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.8.0",
@@ -66,12 +66,13 @@
     "prettier": "^3.7.4",
     "prettier-plugin-organize-imports": "^4.0.0",
     "prettier-plugin-rust": "^0.1.9",
-    "typescript-eslint": "^8.28.0",
-    "vitest": "^4.0.0",
+    "tinybench": "^6.0.0",
     "tsx": "^4.7.0",
     "typescript": "^5.9.2",
+    "typescript-eslint": "^8.28.0",
     "unplugin-swc": "^1.4.5",
-    "vite-tsconfig-paths": "^6.0.0"
+    "vite-tsconfig-paths": "^6.0.0",
+    "vitest": "^4.0.0"
   },
   "volta": {
     "node": "24.13.0"

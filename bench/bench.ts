@@ -1,183 +1,125 @@
 #!/usr/bin/env node
 import { walk } from '@immich/walkrs';
+import { DATASETS } from 'bench/constants';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DATASETS , DatasetConfig} from 'bench/constants';
+import { Bench } from 'tinybench';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const BENCH_DIR = path.join(__dirname, 'datasets');
 
-interface BenchStats {
-  iterations: number;
-  times: number[];
-  mean: number;
-  median: number;
-  stdDev: number;
-  min: number;
-  max: number;
+const EXCLUSION_PATTERNS = ['**/*6*/**'];
+const EXTENSIONS = ['jpg'];
+
+interface BenchmarkOptions {
+  exclusionPatterns?: string[];
+  extensions?: string[];
+  threads?: number;
 }
 
-function calculateStats(times: number[]): BenchStats {
-  const sorted = [...times].toSorted((a, b) => a - b);
-  const mean = times.reduce((a, b) => a + b, 0) / times.length;
-  const variance = times.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / times.length;
-  const stdDev = Math.sqrt(variance);
-  const median =
-    sorted.length % 2 === 0
-      ? (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
-      : sorted[Math.floor(sorted.length / 2)];
-
-  return {
-    iterations: times.length,
-    times,
-    mean,
-    median,
-    stdDev,
-    min: sorted[0],
-    max: sorted.at(-1)!,
-  };
-}
-
-function printBenchmarkResults(title: string, stats: BenchStats): void {
-  const meanText = stats.mean.toFixed(1).padStart(6);
-  const stdDevText = stats.stdDev.toFixed(1).padStart(6);
-  const minText = stats.min.toFixed(1).padStart(6);
-  const maxText = stats.max.toFixed(1).padStart(6);
-
-  console.log('');
-  console.log(title);
-  console.log(`Time (mean ± σ):     ${meanText} ms ± ${stdDevText} ms`);
-  console.log(`Range (min … max):   ${minText} ms … ${maxText} ms    ${stats.iterations} runs`);
-}
-
-async function drainWalk(datasetPath: string, isBenchmarkMode: boolean): Promise<void> {
-  for await (const _entry of walk({
+async function run(datasetPath: string, benchmarkOptions?: BenchmarkOptions): Promise<number> {
+  const walkOptions = {
     paths: [datasetPath],
-    benchmark: isBenchmarkMode,
-    // eslint-disable-next-line no-empty
-  })) {
-  }
-}
+    ...(benchmarkOptions?.exclusionPatterns && { exclusionPatterns: benchmarkOptions.exclusionPatterns }),
+    ...(benchmarkOptions?.extensions && { extensions: benchmarkOptions.extensions }),
+    ...(benchmarkOptions?.threads && { threads: benchmarkOptions.threads }),
+  };
 
-async function runBenchmark(datasetPath: string, iterations: number, isBenchmarkMode: boolean): Promise<BenchStats> {
-  console.log('Warming up...');
-  await drainWalk(datasetPath, isBenchmarkMode);
-
-  const times: number[] = [];
-  console.log('Running benchmark...');
-
-  for (let i = 0; i < iterations; i++) {
-    const startTime = performance.now();
-    await drainWalk(datasetPath, isBenchmarkMode);
-    const duration = performance.now() - startTime;
-
-    times.push(duration);
-    const percent = Math.round(((i + 1) / iterations) * 100);
-    process.stdout.write(
-      `\r  ${percent.toString().padStart(3)}% (Run ${(i + 1).toString().padStart(3)}/${iterations})`,
-    );
+  let fileCount = 0;
+  for await (const entry of walk(walkOptions)) {
+    const batch = JSON.parse(entry.toString()) as string[];
+    fileCount += batch.length;
   }
 
-  console.log('');
-
-  return calculateStats(times);
-}
-
-function parseArgs(args: string[]): { datasetName?: string; iterations: number } {
-  let datasetName: string | undefined;
-  let iterations = 10;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '--dataset' || arg === '-d') {
-      datasetName = args[i + 1];
-      i++;
-      continue;
-    }
-
-    if (arg.startsWith('--dataset=')) {
-      datasetName = arg.slice('--dataset='.length);
-      continue;
-    }
-
-    if (arg === '--iterations' || arg === '-i') {
-      const value = args[i + 1];
-      iterations = Number.parseInt(value ?? '', 10);
-      i++;
-      continue;
-    }
-
-    if (arg.startsWith('--iterations=')) {
-      iterations = Number.parseInt(arg.slice('--iterations='.length), 10);
-      continue;
-    }
-
-    console.error(`Unknown argument: ${arg}`);
-    process.exit(1);
-  }
-
-  return { datasetName, iterations };
+  return fileCount;
 }
 
 async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-  const { datasetName, iterations } = parseArgs(args);
+  const specifiedDatasets: string[] = [];
 
+  for (const arg of process.argv.slice(2)) {
+    if (arg.startsWith('-')) {
+      console.error(`Unknown argument: ${arg}`);
+      process.exit(1);
+    }
 
-  if (!datasetName) {
-    console.error('Usage: node bench/bench.ts --dataset <folder> [--iterations <count>]');
-    console.error('');
-    console.error('Examples:');
-    console.error('  node bench/bench.ts --dataset 1k');
-    console.error('  node bench/bench.ts --dataset 10k --iterations 20');
-    process.exit(1);
+    specifiedDatasets.push(arg);
   }
 
-  if (iterations < 1 || iterations > 1000) {
-    console.error('Error: iterations must be between 1 and 1000');
-    process.exit(1);
+  const datasets = specifiedDatasets.length > 0 ? specifiedDatasets : DATASETS.map((d) => d.name);
+
+  console.log(`Benchmarking file walk on datasets: ${datasets.join(', ')}`);
+
+  const maxThreads = os.cpus().length;
+  const threadCounts: number[] = [1];
+  if (maxThreads >= 2) {
+    threadCounts.push(2);
+  }
+  if (maxThreads > 2) {
+    threadCounts.push(0); // 0 for auto
   }
 
-  const datasetPath = path.join(BENCH_DIR, datasetName);
+  const bench = new Bench({
+    time: 20,
+    warmupIterations: 1,
+  });
 
-  if (!fs.existsSync(datasetPath)) {
-    console.error(`Error: Dataset not found: ${datasetPath}`);
-    console.error('Use the setup script to create sets: node bench/setup.ts <dataset> to create it');
-    process.exit(1);
+  for (const dataset of datasets) {
+    const datasetPath = path.join(BENCH_DIR, dataset);
+
+    if (!fs.existsSync(datasetPath)) {
+      console.error(`Error: Dataset not found: ${datasetPath}`);
+      console.error('Use the setup script to create sets');
+      process.exit(1);
+    }
+
+    const fileCount = await run(datasetPath);
+    const exclusionCount = await run(datasetPath, { exclusionPatterns: EXCLUSION_PATTERNS });
+    const extensionCount = await run(datasetPath, { extensions: EXTENSIONS });
+    const combinedCount = await run(datasetPath, {
+      exclusionPatterns: EXCLUSION_PATTERNS,
+      extensions: EXTENSIONS,
+    });
+
+    console.log(`Dataset: ${dataset}`);
+    console.log(`  Total files: ${fileCount}`);
+    console.log(`  After exclusions: ${exclusionCount}`);
+    console.log(`  After extensions: ${extensionCount}`);
+    console.log(`  After exclusions + extensions: ${combinedCount}`);
+
+    for (const threads of threadCounts) {
+      // Baseline - no options
+      bench.add(`${dataset}, threads: ${threads}`, async () => {
+        await run(datasetPath, { threads });
+      });
+
+      // Add an exclusion pattern
+      bench.add(`${dataset} (exclusions), threads: ${threads}`, async () => {
+        await run(datasetPath, { exclusionPatterns: EXCLUSION_PATTERNS, threads });
+      });
+
+      // Add an extension filter
+      bench.add(`${dataset} (extensions), threads: ${threads}`, async () => {
+        await run(datasetPath, { extensions: EXTENSIONS, threads });
+      });
+
+      // Add both exclusions and extensions
+      bench.add(`${dataset} (exclusions + extensions), threads: ${threads}`, async () => {
+        await run(datasetPath, {
+          exclusionPatterns: EXCLUSION_PATTERNS,
+          extensions: EXTENSIONS,
+          threads,
+        });
+      });
+    }
   }
 
-  console.log(`Benchmarking file walk on dataset: ${datasetName} and ${iterations} iterations`);
-  console.log('');
+  await bench.run();
 
-  console.log('='.repeat(60));
-  console.log('With Serialization (rust and node performance)');
-  console.log('='.repeat(60));
-  const withSerializationStats = await runBenchmark(datasetPath, iterations, false);
-
-  printBenchmarkResults('Full Stack Results:', withSerializationStats);
-
-  // Run 2: Pure Rust without serialization
-  console.log('');
-  console.log('='.repeat(60));
-  console.log('Pure Rust (no serialization overhead)');
-  console.log('='.repeat(60));
-  const pureRustStats = await runBenchmark(datasetPath, iterations, true);
-
-  printBenchmarkResults('Pure Rust Results:', pureRustStats);
-
-  // Comparison
-  console.log('');
-  console.log('='.repeat(60));
-  console.log('Comparison: Serialization Overhead');
-  console.log('='.repeat(60));
-  const overheadMs = withSerializationStats.mean - pureRustStats.mean;
-  console.log(`   Full Stack (Mean): ${withSerializationStats.mean.toFixed(2)} ms`);
-  console.log(`   Pure Rust (Mean):          ${pureRustStats.mean.toFixed(2)} ms`);
-  console.log(
-    `   Overhead:                  ${overheadMs.toFixed(2)} ms (${((overheadMs / pureRustStats.mean) * 100).toFixed(1)}%)`,
-  );
+  console.table(bench.table());
 }
 
 main().catch(console.error);

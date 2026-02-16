@@ -28,8 +28,8 @@ pub struct WalkOptions {
   #[napi(ts_type = "string[] | undefined")]
   pub extensions: Option<Vec<String>>,
 
-  #[napi(ts_type = "boolean | undefined")]
-  pub benchmark: Option<bool>,
+  #[napi(ts_type = "number | undefined")]
+  pub threads: Option<u32>,
 }
 
 #[napi(async_iterator)]
@@ -37,7 +37,8 @@ pub struct Walk {
   rx: Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>,
 }
 
-impl napi::bindgen_prelude::AsyncGenerator for Walk {
+#[napi]
+impl AsyncGenerator for Walk {
   type Yield = Buffer;
   type Next = ();
   type Return = ();
@@ -69,20 +70,20 @@ pub fn walk(options: WalkOptions) -> Result<Walk> {
     walk_builder.add(path);
   }
 
-  let benchmark = options.benchmark.unwrap_or(false);
+  let threads = options.threads.unwrap_or(0);
 
-  let walker = walk_builder
+  walk_builder
     .git_ignore(false)
     .hidden(!options.include_hidden.unwrap_or(false))
     .parents(false)
     .ignore(false)
+    .threads(threads as usize)
     .git_global(false)
-    .git_exclude(false)
-    .build_parallel();
+    .git_exclude(false);
 
-  std::thread::spawn(move || {
-    walker.run(|| visit(tx.clone(), Arc::clone(&exclusion_set), Arc::clone(&extension_set), benchmark))
-  });
+  let walker = walk_builder.build_parallel();
+
+  std::thread::spawn(move || walker.run(|| visit(tx.clone(), Arc::clone(&exclusion_set), Arc::clone(&extension_set))));
 
   Ok(Walk {
     rx: Arc::new(Mutex::new(rx)),
@@ -113,7 +114,6 @@ fn visit(
   tx: UnboundedSender<Vec<u8>>,
   exclusion_set: Arc<GlobSet>,
   extension_filter: Arc<ExtensionFilter>,
-  benchmark: bool,
 ) -> Box<dyn FnMut(std::result::Result<DirEntry, ignore::Error>) -> WalkState + Send> {
   let mut batch_sender = BatchSender::new(tx);
 
@@ -144,14 +144,12 @@ fn visit(
       return WalkState::Continue;
     }
 
-    if !benchmark {
-      let Ok(path) = entry.into_path().into_os_string().into_string() else {
-        return WalkState::Continue;
-      };
+    let Ok(path) = entry.into_path().into_os_string().into_string() else {
+      return WalkState::Continue;
+    };
 
-      if batch_sender.send(path).is_err() {
-        return WalkState::Quit;
-      }
+    if batch_sender.send(path).is_err() {
+      return WalkState::Quit;
     }
 
     WalkState::Continue
