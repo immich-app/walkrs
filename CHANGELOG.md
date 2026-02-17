@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.3](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.2...walkrs-v0.0.3) (2026-02-17)
+
+
+### Bug Fixes
+
+* settings vs platforms ([#19](https://github.com/immich-app/walkrs/issues/19)) ([dc9be37](https://github.com/immich-app/walkrs/commit/dc9be379c9eaa4f0122d88acad191ca3fd0101d2))
+
 ## [0.0.2](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.1...walkrs-v0.0.2) (2026-02-17)
 
 
