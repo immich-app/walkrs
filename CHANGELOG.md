@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.4](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.3...walkrs-v0.0.4) (2026-02-17)
+
+
+### Bug Fixes
+
+* fast-glob readme ([#22](https://github.com/immich-app/walkrs/issues/22)) ([0e9c603](https://github.com/immich-app/walkrs/commit/0e9c60302513a352de221f5b79bd54fa86401ecc))
+
 ## [0.0.3](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.2...walkrs-v0.0.3) (2026-02-17)
 
 
