@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.5](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.4...walkrs-v0.0.5) (2026-02-17)
+
+
+### Bug Fixes
+
+* remove unneeded targets ([#24](https://github.com/immich-app/walkrs/issues/24)) ([ffea70e](https://github.com/immich-app/walkrs/commit/ffea70e6673748d9bb8edfb5eedc5d11493e6879))
+
 ## [0.0.4](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.3...walkrs-v0.0.4) (2026-02-17)
 
 
