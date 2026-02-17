@@ -41,15 +41,15 @@ jobs:
         uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
           toolchain: stable
-          targets: ${{ matrix.settings.target }}
+          targets: ${{ matrix.platforms.target }}
       - name: Install dependencies
         run: pnpm install
       - name: Build
-        run: pnpm build --target ${{ matrix.settings.target }} --release
+        run: pnpm build --target ${{ matrix.platforms.target }} --release
       - name: Upload artifacts
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: bindings-${{ matrix.settings.target }}
+          name: bindings-${{ matrix.platforms.target }}
           path: dist/*.node
           if-no-files-found: error
 
