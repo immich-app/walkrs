@@ -2,12 +2,14 @@
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "release-type": "node",
   "prerelease": true,
-  "bump-minor-pre-major": false,
+  "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": true,
   "packages": {
     ".": {
       "package-name": "@immich/walkrs",
-      "prerelease-type": "alpha"
+      "prerelease-type": "alpha",
+      "bump-minor-pre-major": true,
+      "bump-patch-for-minor-pre-major": true
     }
   }
 }
