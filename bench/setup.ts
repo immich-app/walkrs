@@ -10,11 +10,9 @@ async function createDataset(config: DatasetConfig): Promise<void> {
 
   await fs.mkdir(datasetPath, { recursive: true });
 
-  // For very large datasets, use a hierarchical structure to avoid inode limits
   const filesPerDir = Math.min(1000, Math.max(10, Math.floor(Math.sqrt(config.fileCount))));
   const dirsNeeded = Math.ceil(config.fileCount / filesPerDir);
 
-  // Create all subdirectories in parallel
   const dirPromises = [];
   for (let dirIdx = 0; dirIdx < dirsNeeded; dirIdx++) {
     const subDir = join(datasetPath, `dir_${String(dirIdx).padStart(6, '0')}`);
@@ -22,8 +20,7 @@ async function createDataset(config: DatasetConfig): Promise<void> {
   }
   await Promise.all(dirPromises);
 
-  // Create file write operations in batches for better performance
-  const BATCH_SIZE = 10_000; // Process 10k files at a time to avoid overwhelming the system
+  const BATCH_SIZE = 10_000;
   const EXTENSIONS = ['.txt', '.jpg', '.tif', '.dng', '.dat', '.xyz'];
   let fileCounter = 0;
 
@@ -42,7 +39,6 @@ async function createDataset(config: DatasetConfig): Promise<void> {
     await Promise.all(filePromises);
     fileCounter += filePromises.length;
 
-    // Progress indicator for large datasets
     process.stdout.write(`\r  Progress: ${fileCounter.toLocaleString()} / ${config.fileCount.toLocaleString()}`);
   }
 
@@ -55,13 +51,28 @@ async function main(): Promise<void> {
   await fs.mkdir(BENCH_DIR, { recursive: true });
 
   const args = process.argv.slice(2);
-  let datasetsToCreate = DATASETS;
+  const hasAllFlag = args.includes('--all');
+  const datasetNames = args.filter((arg) => arg !== '--all');
 
-  if (args.length > 0) {
-    datasetsToCreate = DATASETS.filter((d) => args.includes(d.name));
+  // If both datasets and --all are specified, error out
+  if (hasAllFlag && datasetNames.length > 0) {
+    throw new Error('Cannot specify both --all and specific datasets');
+  }
+
+  let datasetsToCreate: DatasetConfig[];
+
+  if (hasAllFlag) {
+    // Create all datasets
+    datasetsToCreate = DATASETS;
+  } else if (datasetNames.length > 0) {
+    // Create only specified datasets
+    datasetsToCreate = DATASETS.filter((d) => datasetNames.includes(d.name));
     if (datasetsToCreate.length === 0) {
-      throw new Error(`No matching datasets found for arguments: ${args.join(', ')}`);
+      throw new Error(`No matching datasets found for arguments: ${datasetNames.join(', ')}`);
     }
+  } else {
+    // Create only default datasets
+    datasetsToCreate = DATASETS.filter((d) => d.default);
   }
 
   console.log(`Creating ${datasetsToCreate.length} dataset(s) in ${BENCH_DIR}\n`);
@@ -70,7 +81,7 @@ async function main(): Promise<void> {
     try {
       await createDataset(config);
     } catch (error) {
-      console.error(`✗ Error creating dataset ${config.name}:`, error);
+      console.error(`Error creating dataset ${config.name}:`, error);
     }
   }
 

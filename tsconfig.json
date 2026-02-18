@@ -17,5 +17,5 @@
     "rootDir": "."
   },
   "include": ["test/**/*.ts", "bench/**/*.ts", "types/**/*.d.ts"],
-  "exclude": ["node_modules", "dist", "target", "bench/datasets"]
+  "exclude": ["node_modules", "dist", "target"]
 }
