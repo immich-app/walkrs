@@ -42,7 +42,7 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: bindings-${{ matrix.platforms.target }}
-          path: dist/
+          path: ${{ matrix.platforms.target == 'x86_64-unknown-linux-gnu' && 'dist/' || 'dist/*.node' }}
           if-no-files-found: error
 
   publish:
@@ -57,17 +57,20 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
+
       - name: Setup Mise
         uses: immich-app/devtools/actions/use-mise@dab18118da6476e8237ac94080fd937983fecd42 # use-mise-action-v1.1.2
-      - name: Install dependencies
-        run: pnpm install
+
       - name: Download all artifacts
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           path: artifacts
+
       - name: Assemble dist
         run: mkdir -p dist && cp artifacts/bindings-*/* dist/
+
       - name: List dist contents
         run: ls -R ./dist
+
       - name: Publish
         run: pnpm publish --access public --provenance --no-git-checks
