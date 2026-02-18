@@ -4,7 +4,7 @@ const path = process.argv[2] || '/';
 
 const files: string[] = [];
 for await (const batch of walk({ paths: [path] })) {
-  files.push(...JSON.parse(batch));
+  files.push(...batch);
 }
 
 console.log(files.length);
