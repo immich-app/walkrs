@@ -1,32 +1,12 @@
 #!/usr/bin/env node
-import { DATASETS, DatasetConfig } from 'bench/constants';
+import { BENCH_DIR, DATASETS, DatasetConfig } from 'bench/constants';
 import { promises as fs } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const BENCH_DIR = path.join(__dirname, 'datasets');
+import { join } from 'node:path';
 
 async function createDataset(config: DatasetConfig): Promise<void> {
-  const datasetPath = path.join(BENCH_DIR, config.name);
+  const datasetPath = join(BENCH_DIR, config.name);
 
   console.log(`Creating dataset: ${config.name} (${config.fileCount.toLocaleString()} files)...`);
-
-  // Check if dataset directory already exists and is not empty
-  try {
-    const entries = await fs.readdir(datasetPath);
-    if (entries.length > 0) {
-      throw new Error(
-        `Dataset directory already exists and is not empty: ${datasetPath}. Please clear it before continuing setup.`,
-      );
-    }
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('not empty')) {
-      throw error;
-    }
-    // Directory doesn't exist, which is fine
-  }
 
   await fs.mkdir(datasetPath, { recursive: true });
 
@@ -37,7 +17,7 @@ async function createDataset(config: DatasetConfig): Promise<void> {
   // Create all subdirectories in parallel
   const dirPromises = [];
   for (let dirIdx = 0; dirIdx < dirsNeeded; dirIdx++) {
-    const subDir = path.join(datasetPath, `dir_${String(dirIdx).padStart(6, '0')}`);
+    const subDir = join(datasetPath, `dir_${String(dirIdx).padStart(6, '0')}`);
     dirPromises.push(fs.mkdir(subDir, { recursive: true }));
   }
   await Promise.all(dirPromises);
@@ -53,9 +33,9 @@ async function createDataset(config: DatasetConfig): Promise<void> {
 
     for (let idx = batchStart; idx < batchEnd; idx++) {
       const dirIdx = Math.floor(idx / filesPerDir);
-      const subDir = path.join(datasetPath, `dir_${String(dirIdx).padStart(6, '0')}`);
+      const subDir = join(datasetPath, `dir_${String(dirIdx).padStart(6, '0')}`);
       const ext = EXTENSIONS[idx % EXTENSIONS.length];
-      const fileName = path.join(subDir, `file_${String(idx).padStart(9, '0')}${ext}`);
+      const fileName = join(subDir, `file_${String(idx).padStart(9, '0')}${ext}`);
       filePromises.push(fs.writeFile(fileName, ''));
     }
 
@@ -72,29 +52,7 @@ async function createDataset(config: DatasetConfig): Promise<void> {
 async function main(): Promise<void> {
   console.log('Walkrs Benchmark Dataset Generator\n');
 
-  // Check if BENCH_DIR is accessible and empty
-
-  let directoryNotEmpty = false;
-  try {
-    const entries = await fs.readdir(BENCH_DIR);
-    if (entries.length > 0) {
-      directoryNotEmpty = true;
-    }
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
-      // Create benchmark datasets directory
-      await fs.mkdir(BENCH_DIR, { recursive: true });
-    } else {
-      throw error;
-    }
-  }
-
-  if (directoryNotEmpty) {
-    console.error(
-      `Benchmark datasets directory already exists and is not empty: ${BENCH_DIR}. Please clear it before continuing setup.`,
-    );
-    process.exit(1);
-  }
+  await fs.mkdir(BENCH_DIR, { recursive: true });
 
   const args = process.argv.slice(2);
   let datasetsToCreate = DATASETS;
