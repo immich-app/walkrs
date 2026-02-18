@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.0.8](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.7...walkrs-v0.0.8) (2026-02-18)
+
+
+### Features
+
+* backpressure and fewer allocations ([#29](https://github.com/immich-app/walkrs/issues/29)) ([e76d8cb](https://github.com/immich-app/walkrs/commit/e76d8cb0f16539c9f36b658a294b8d905251b5e4))
+* parse buffer internally ([#27](https://github.com/immich-app/walkrs/issues/27)) ([5d6088f](https://github.com/immich-app/walkrs/commit/5d6088f5b462231ad04a4c0c8e71346438064528))
+
+
+### Bug Fixes
+
+* repo url ([#36](https://github.com/immich-app/walkrs/issues/36)) ([d187f9b](https://github.com/immich-app/walkrs/commit/d187f9b7077f1faeea5706f8191dfa49ddb958e0))
+
 ## [0.0.7](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.6...walkrs-v0.0.7) (2026-02-18)
 
 
