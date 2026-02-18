@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.6](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.5...walkrs-v0.0.6) (2026-02-18)
+
+
+### Bug Fixes
+
+* use arm64 ([#30](https://github.com/immich-app/walkrs/issues/30)) ([c7ce202](https://github.com/immich-app/walkrs/commit/c7ce202a84cb43c68723ad9fddcd4656e95ac70f))
+
 ## [0.0.5](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.4...walkrs-v0.0.5) (2026-02-17)
 
 
