@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.11](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.10...walkrs-v0.0.11) (2026-02-18)
+
+
+### Bug Fixes
+
+* publish workflow ([#42](https://github.com/immich-app/walkrs/issues/42)) ([7753c66](https://github.com/immich-app/walkrs/commit/7753c668ce998765edbcd695eb76f3910db65c21))
+
 ## [0.0.10](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.9...walkrs-v0.0.10) (2026-02-18)
 
 
