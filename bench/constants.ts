@@ -17,14 +17,15 @@ export const BENCH_DIR = process.env.BENCH_DIR || join(getCacheDir('walkrs'), 'd
 export interface DatasetConfig {
   name: string;
   fileCount: number;
+  default: boolean;
 }
 
 export const DATASETS: DatasetConfig[] = [
-  { name: '10', fileCount: 10 },
-  { name: '100', fileCount: 100 },
-  { name: '1k', fileCount: 1000 },
-  { name: '10k', fileCount: 10_000 },
-  { name: '100k', fileCount: 100_000 },
-  // { name: '1m', fileCount: 1_000_000 },
-  // { name: '10m', fileCount: 10_000_000 },
+  { name: '10', fileCount: 10, default: true },
+  { name: '100', fileCount: 100, default: true },
+  { name: '1k', fileCount: 1000, default: true },
+  { name: '10k', fileCount: 10_000, default: true },
+  { name: '100k', fileCount: 100_000, default: true },
+  { name: '1m', fileCount: 1_000_000, default: false },
+  { name: '10m', fileCount: 10_000_000, default: false },
 ];
