@@ -29,8 +29,7 @@ async function run(datasetPath: string, benchmarkOptions?: BenchmarkOptions): Pr
   };
 
   let fileCount = 0;
-  for await (const entry of walk(walkOptions)) {
-    const batch = JSON.parse(entry.toString()) as string[];
+  for await (const batch of walk(walkOptions)) {
     fileCount += batch.length;
   }
 

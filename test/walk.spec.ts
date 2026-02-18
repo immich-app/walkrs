@@ -220,9 +220,8 @@ describe('walk', () => {
         };
 
         const actual: string[] = [];
-        const iterable = walk(adjustedOptions) as unknown as AsyncIterable<Buffer>;
-        for await (const batch of iterable) {
-          actual.push(...JSON.parse(batch.toString()));
+        for await (const batch of walk(adjustedOptions)) {
+          actual.push(...batch);
         }
         const expected = Object.entries(files)
           .filter((entry) => entry[1])
