@@ -61,13 +61,15 @@ jobs:
         uses: immich-app/devtools/actions/use-mise@dab18118da6476e8237ac94080fd937983fecd42 # use-mise-action-v1.1.2
       - name: Install dependencies
         run: pnpm install
+      - name: Create npm dirs
+        run: pnpm napi create-npm-dirs
       - name: Download all artifacts
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           path: artifacts
-      - name: Move artifacts to dist
+      - name: Move artifacts
         run: pnpm napi artifacts
-      - name: List dist contents
-        run: ls -R ./dist
+      - name: List packages
+        run: ls -R ./npm
       - name: Publish
         run: pnpm publish --access public --provenance --no-git-checks
