@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.9](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.8...walkrs-v0.0.9) (2026-02-18)
+
+
+### Bug Fixes
+
+* cleanup benchmarks ([#38](https://github.com/immich-app/walkrs/issues/38)) ([8dcd9e7](https://github.com/immich-app/walkrs/commit/8dcd9e742076c1619d5ca41b334886defcdf3e0c))
+
 ## [0.0.8](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.7...walkrs-v0.0.8) (2026-02-18)
 
 
