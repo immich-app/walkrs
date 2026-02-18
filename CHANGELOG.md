@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.0.12](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.11...walkrs-v0.0.12) (2026-02-18)
+
+
+### Bug Fixes
+
+* default export in package json ([#45](https://github.com/immich-app/walkrs/issues/45)) ([f5c4dde](https://github.com/immich-app/walkrs/commit/f5c4dde72a4f47f0182a86fa77ecd4d38a678b75))
+
+
+### Miscellaneous
+
+* modify LICENSE to AGPL ([8099456](https://github.com/immich-app/walkrs/commit/8099456f0b2c796ee2e1256712819a0b085e9fa6))
+
 ## [0.0.11](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.10...walkrs-v0.0.11) (2026-02-18)
 
 
