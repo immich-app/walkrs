@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.10](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.9...walkrs-v0.0.10) (2026-02-18)
+
+
+### Miscellaneous
+
+* add chore to release please ([#40](https://github.com/immich-app/walkrs/issues/40)) ([9fff2cb](https://github.com/immich-app/walkrs/commit/9fff2cbbfc3833730f6a0363d2a3cfc847470f1b))
+
 ## [0.0.9](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.8...walkrs-v0.0.9) (2026-02-18)
 
 
