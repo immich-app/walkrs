@@ -9,7 +9,7 @@ use ignore::{DirEntry, WalkBuilder, WalkState};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use tokio::sync::Mutex;
-use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::sync::mpsc::{self, Sender};
 
 use batch_sender::BatchSender;
 use extension_filter::ExtensionFilter;
@@ -34,7 +34,7 @@ pub struct WalkOptions {
 
 #[napi(async_iterator)]
 pub struct Walk {
-  rx: Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>,
+  rx: Arc<Mutex<mpsc::Receiver<Vec<u8>>>>,
 }
 
 #[napi]
@@ -51,7 +51,8 @@ impl AsyncGenerator for Walk {
 
 #[napi]
 pub fn walk(options: WalkOptions) -> Result<Walk> {
-  let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
+  const CHANNEL_CAPACITY: usize = 16;
+  let (tx, rx) = mpsc::channel::<Vec<u8>>(CHANNEL_CAPACITY);
 
   if options.paths.is_empty() {
     return Ok(Walk {
@@ -108,7 +109,7 @@ fn build_exclusion_set(exclusion_patterns: &[String]) -> Result<GlobSet> {
 }
 
 fn visit(
-  tx: UnboundedSender<Vec<u8>>,
+  tx: Sender<Vec<u8>>,
   exclusion_set: Arc<GlobSet>,
   extension_filter: Arc<ExtensionFilter>,
 ) -> Box<dyn FnMut(std::result::Result<DirEntry, ignore::Error>) -> WalkState + Send> {
