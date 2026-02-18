@@ -1,36 +1,41 @@
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::Sender;
 
 const BATCH_SIZE: usize = 4096;
+const BUF_CAPACITY: usize = BATCH_SIZE * 100;
 
 pub(crate) struct BatchSender {
-  batch: Vec<String>,
+  count: usize,
   buf: Vec<u8>,
-  tx: UnboundedSender<Vec<u8>>,
+  tx: Sender<Vec<u8>>,
 }
 
 impl BatchSender {
-  pub fn new(tx: UnboundedSender<Vec<u8>>) -> Self {
-    Self {
-      batch: Vec::with_capacity(BATCH_SIZE),
-      buf: Vec::new(),
-      tx,
-    }
+  pub fn new(tx: Sender<Vec<u8>>) -> Self {
+    let mut buf = Vec::with_capacity(BUF_CAPACITY);
+    buf.push(b'[');
+    Self { count: 0, buf, tx }
   }
 
-  pub fn send(&mut self, item: String) -> Result<(), ()> {
-    self.batch.push(item);
-    if self.batch.len() >= BATCH_SIZE {
+  pub fn send(&mut self, item: &str) -> Result<(), ()> {
+    if self.count > 0 {
+      self.buf.push(b',');
+    }
+    serde_json::to_writer(&mut self.buf, item).unwrap();
+    self.count += 1;
+    if self.count >= BATCH_SIZE {
       self.flush()?;
     }
     Ok(())
   }
 
   fn flush(&mut self) -> Result<(), ()> {
-    if !self.batch.is_empty() {
-      serde_json::to_writer(&mut self.buf, &self.batch).unwrap();
-      self.tx.send(self.buf.clone()).map_err(|_| ())?;
-      self.buf.clear();
-      self.batch.clear();
+    if self.count > 0 {
+      self.buf.push(b']');
+      let mut new_buf = Vec::with_capacity(BUF_CAPACITY);
+      new_buf.push(b'[');
+      let buf = std::mem::replace(&mut self.buf, new_buf);
+      self.tx.blocking_send(buf).map_err(|_| ())?;
+      self.count = 0;
     }
     Ok(())
   }

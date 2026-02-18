@@ -9,7 +9,7 @@ use ignore::{DirEntry, WalkBuilder, WalkState};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use tokio::sync::Mutex;
-use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::sync::mpsc::{self, Sender};
 
 use batch_sender::BatchSender;
 use extension_filter::ExtensionFilter;
@@ -34,7 +34,7 @@ pub struct WalkOptions {
 
 #[napi(async_iterator)]
 pub struct Walk {
-  rx: Arc<Mutex<mpsc::UnboundedReceiver<Vec<u8>>>>,
+  rx: Arc<Mutex<mpsc::Receiver<Vec<u8>>>>,
 }
 
 #[napi]
@@ -43,10 +43,7 @@ impl AsyncGenerator for Walk {
   type Next = ();
   type Return = ();
 
-  fn next(
-    &mut self,
-    _value: Option<Self::Next>,
-  ) -> impl std::future::Future<Output = Result<Option<Self::Yield>>> + Send + 'static {
+  fn next(&mut self, _value: Option<Self::Next>) -> impl Future<Output = Result<Option<Self::Yield>>> + Send + 'static {
     let rx = Arc::clone(&self.rx);
     async move { Ok(rx.lock().await.recv().await.map(Into::into)) }
   }
@@ -54,7 +51,8 @@ impl AsyncGenerator for Walk {
 
 #[napi]
 pub fn walk(options: WalkOptions) -> Result<Walk> {
-  let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
+  const CHANNEL_CAPACITY: usize = 16;
+  let (tx, rx) = mpsc::channel::<Vec<u8>>(CHANNEL_CAPACITY);
 
   if options.paths.is_empty() {
     return Ok(Walk {
@@ -111,7 +109,7 @@ fn build_exclusion_set(exclusion_patterns: &[String]) -> Result<GlobSet> {
 }
 
 fn visit(
-  tx: UnboundedSender<Vec<u8>>,
+  tx: Sender<Vec<u8>>,
   exclusion_set: Arc<GlobSet>,
   extension_filter: Arc<ExtensionFilter>,
 ) -> Box<dyn FnMut(std::result::Result<DirEntry, ignore::Error>) -> WalkState + Send> {
@@ -144,7 +142,7 @@ fn visit(
       return WalkState::Continue;
     }
 
-    let Ok(path) = entry.into_path().into_os_string().into_string() else {
+    let Some(path) = path.to_str() else {
       return WalkState::Continue;
     };
 
