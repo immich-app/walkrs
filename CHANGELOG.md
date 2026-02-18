@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.0.7](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.6...walkrs-v0.0.7) (2026-02-18)
+
+
+### Bug Fixes
+
+* 006 ([314cfc8](https://github.com/immich-app/walkrs/commit/314cfc80553f6c8dcd4b5d180d98f74ac1fa0609))
+* ci ([#26](https://github.com/immich-app/walkrs/issues/26)) ([4666d97](https://github.com/immich-app/walkrs/commit/4666d9778dbfbada32f524aad639ab32dc8c5407))
+* revert arm64 ([#32](https://github.com/immich-app/walkrs/issues/32)) ([9d81789](https://github.com/immich-app/walkrs/commit/9d817890358a927bfcdb2da3ab4767f4fdfda0d4))
+* revert to 006 ([#34](https://github.com/immich-app/walkrs/issues/34)) ([314cfc8](https://github.com/immich-app/walkrs/commit/314cfc80553f6c8dcd4b5d180d98f74ac1fa0609))
+
 ## [0.0.6](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.5...walkrs-v0.0.6) (2026-02-18)
 
 
