@@ -1,15 +1,10 @@
 #!/usr/bin/env node
 import { walk } from '@immich/walkrs';
-import { DATASETS } from 'bench/constants';
+import { BENCH_DIR, DATASETS } from 'bench/constants';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { Bench } from 'tinybench';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const BENCH_DIR = path.join(__dirname, 'datasets');
 
 const EXCLUSION_PATTERNS = ['**/*6*/**'];
 const EXTENSIONS = ['jpg'];
@@ -92,28 +87,26 @@ async function main(): Promise<void> {
 
     for (const threads of threadCounts) {
       // Baseline - no options
-      bench.add(`${dataset}, threads: ${threads}`, async () => {
-        await run(datasetPath, { threads });
-      });
+      bench.add(`${dataset}, threads: ${threads}`, () => run(datasetPath, { threads }));
 
       // Add an exclusion pattern
-      bench.add(`${dataset} (exclusions), threads: ${threads}`, async () => {
-        await run(datasetPath, { exclusionPatterns: EXCLUSION_PATTERNS, threads });
-      });
+      bench.add(`${dataset} (exclusions), threads: ${threads}`, () =>
+        run(datasetPath, { exclusionPatterns: EXCLUSION_PATTERNS, threads }),
+      );
 
       // Add an extension filter
-      bench.add(`${dataset} (extensions), threads: ${threads}`, async () => {
-        await run(datasetPath, { extensions: EXTENSIONS, threads });
-      });
+      bench.add(`${dataset} (extensions), threads: ${threads}`, () =>
+        run(datasetPath, { extensions: EXTENSIONS, threads }),
+      );
 
       // Add both exclusions and extensions
-      bench.add(`${dataset} (exclusions + extensions), threads: ${threads}`, async () => {
-        await run(datasetPath, {
+      bench.add(`${dataset} (exclusions + extensions), threads: ${threads}`, () =>
+        run(datasetPath, {
           exclusionPatterns: EXCLUSION_PATTERNS,
           extensions: EXTENSIONS,
           threads,
-        });
-      });
+        }),
+      );
     }
   }
 

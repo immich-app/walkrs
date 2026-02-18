@@ -52,6 +52,7 @@ export default typescriptEslint.config([
       '@typescript-eslint/no-misused-promises': 'error',
       'require-await': 'off',
       '@typescript-eslint/require-await': 'error',
+      'unicorn/switch-case-braces': 'off',
       curly: 2,
       'prettier/prettier': 0,
       'object-shorthand': ['error', 'always'],
