@@ -141,11 +141,11 @@ fn visit(
       return WalkState::Continue;
     }
 
-    let Some(path) = entry.path().to_str() else {
+    let Some(path) = path.to_str() else {
       return WalkState::Continue;
     };
 
-    if batch_sender.send(path.to_owned()).is_err() {
+    if batch_sender.send(path).is_err() {
       return WalkState::Quit;
     }
 
