@@ -1,6 +1,6 @@
 {
   "name": "@immich/walkrs",
-  "version": "0.0.6",
+  "version": "0.0.5",
   "description": "Fast file tree walker for Node.js, built with ripgrep's ignore crate",
   "type": "module",
   "main": "./dist/index.js",
@@ -19,8 +19,8 @@
   "napi": {
     "binaryName": "walkrs",
     "targets": [
-      "arm64-apple-darwin",
-      "arm64-unknown-linux-gnu",
+      "aarch64-apple-darwin",
+      "aarch64-unknown-linux-gnu",
       "x86_64-unknown-linux-gnu"
     ],
     "package": {
