@@ -43,10 +43,7 @@ impl AsyncGenerator for Walk {
   type Next = ();
   type Return = ();
 
-  fn next(
-    &mut self,
-    _value: Option<Self::Next>,
-  ) -> impl std::future::Future<Output = Result<Option<Self::Yield>>> + Send + 'static {
+  fn next(&mut self, _value: Option<Self::Next>) -> impl Future<Output = Result<Option<Self::Yield>>> + Send + 'static {
     let rx = Arc::clone(&self.rx);
     async move { Ok(rx.lock().await.recv().await.map(Into::into)) }
   }
@@ -144,11 +141,11 @@ fn visit(
       return WalkState::Continue;
     }
 
-    let Ok(path) = entry.into_path().into_os_string().into_string() else {
+    let Some(path) = entry.path().to_str() else {
       return WalkState::Continue;
     };
 
-    if batch_sender.send(path).is_err() {
+    if batch_sender.send(path.to_owned()).is_err() {
       return WalkState::Quit;
     }
 

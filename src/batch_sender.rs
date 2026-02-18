@@ -28,8 +28,8 @@ impl BatchSender {
   fn flush(&mut self) -> Result<(), ()> {
     if !self.batch.is_empty() {
       serde_json::to_writer(&mut self.buf, &self.batch).unwrap();
-      self.tx.send(self.buf.clone()).map_err(|_| ())?;
-      self.buf.clear();
+      let buf = std::mem::replace(&mut self.buf, Vec::with_capacity(BATCH_SIZE * 80));
+      self.tx.send(buf).map_err(|_| ())?;
       self.batch.clear();
     }
     Ok(())
