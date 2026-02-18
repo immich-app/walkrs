@@ -35,7 +35,6 @@
     "build": "napi build --platform --release --esm -o dist",
     "build:debug": "napi build --platform --esm -o dist",
     "build:release": "napi build --platform --release --esm -o dist",
-    "prepublishOnly": "napi prepublish -t npm --no-gh-release",
     "test": "vitest --config test/vitest.config.mjs",
     "typecheck": "tsc --noEmit",
     "ts:check": "tsc --noEmit",
