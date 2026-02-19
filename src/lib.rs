@@ -8,6 +8,7 @@ use globset::{GlobSet, GlobSetBuilder};
 use ignore::{DirEntry, WalkBuilder, WalkState};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
+use serde::Serialize;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::{self, Sender};
 
@@ -30,6 +31,9 @@ pub struct WalkOptions {
 
   #[napi(ts_type = "number | undefined")]
   pub threads: Option<u32>,
+
+  #[napi(ts_type = "boolean | undefined")]
+  pub include_metadata: Option<bool>,
 }
 
 #[napi(async_iterator)]
@@ -80,8 +84,18 @@ pub fn walk(options: WalkOptions) -> Result<Walk> {
     .git_exclude(false);
 
   let walker = walk_builder.build_parallel();
+  let include_metadata = options.include_metadata.unwrap_or(false);
 
-  std::thread::spawn(move || walker.run(|| visit(tx.clone(), Arc::clone(&exclusion_set), Arc::clone(&extension_set))));
+  std::thread::spawn(move || {
+    walker.run(|| {
+      visit(
+        tx.clone(),
+        Arc::clone(&exclusion_set),
+        Arc::clone(&extension_set),
+        include_metadata,
+      )
+    })
+  });
 
   Ok(Walk {
     rx: Arc::new(Mutex::new(rx)),
@@ -108,10 +122,19 @@ fn build_exclusion_set(exclusion_patterns: &[String]) -> Result<GlobSet> {
     .map_err(|e| Error::new(Status::InvalidArg, format!("Failed to build exclusion patterns: {e}")))
 }
 
+#[derive(Serialize)]
+pub struct FileEntry {
+  pub path: String,
+  pub modified: String,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub created: Option<String>,
+}
+
 fn visit(
   tx: Sender<Vec<u8>>,
   exclusion_set: Arc<GlobSet>,
   extension_filter: Arc<ExtensionFilter>,
+  include_metadata: bool,
 ) -> Box<dyn FnMut(std::result::Result<DirEntry, ignore::Error>) -> WalkState + Send> {
   let mut batch_sender = BatchSender::new(tx);
 
@@ -142,11 +165,37 @@ fn visit(
       return WalkState::Continue;
     }
 
-    let Some(path) = path.to_str() else {
+    let Some(path_str) = path.to_str() else {
       return WalkState::Continue;
     };
 
-    if batch_sender.send(path).is_err() {
+    if include_metadata {
+      if let Ok(metadata) = entry.metadata() {
+        let modified = metadata
+          .modified()
+          .unwrap_or_else(|e| panic!("Failed to read modified time for {path_str}: {e}"))
+          .duration_since(std::time::UNIX_EPOCH)
+          .unwrap_or_else(|e| {
+            panic!("Failed to convert modified time for {path_str} to unix time: {e}")
+          })
+          .as_secs()
+          .to_string();
+        let created = metadata
+          .created()
+          .ok()
+          .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+          .map(|d| d.as_secs().to_string());
+
+        let file_entry = FileEntry {
+          path: path_str.to_string(),
+          modified,
+          created,
+        };
+        if batch_sender.send(&file_entry).is_err() {
+          return WalkState::Quit;
+        }
+      }
+    } else if batch_sender.send(&path_str).is_err() {
       return WalkState::Quit;
     }
 

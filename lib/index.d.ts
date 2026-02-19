@@ -1,3 +1,8 @@
 export { WalkOptions } from '../dist/index.js';
 
-export function walk(options: WalkOptions): AsyncGenerator<string[], void, unknown>;
+export interface WalkedFileEntry {
+	path: string;
+	modified: Date;
+}
+
+export function walk(options: WalkOptions): AsyncGenerator<WalkedFileEntry[], void, unknown>;

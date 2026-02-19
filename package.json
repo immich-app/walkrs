@@ -75,5 +75,8 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/immich-app/walkrs"
+  },
+  "dependencies": {
+    "walkrs": "link:../../.local/share/pnpm/global/5/node_modules/walkrs"
   }
 }
