@@ -14,6 +14,15 @@ use tokio::sync::mpsc::{self, Sender};
 use batch_sender::BatchSender;
 use extension_filter::ExtensionFilter;
 
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub(crate) enum WalkItem {
+  #[serde(rename = "entry")]
+  Entry { path: String },
+  #[serde(rename = "error")]
+  Error { path: Option<String>, message: String },
+}
+
 #[napi(object)]
 pub struct WalkOptions {
   #[napi(ts_type = "string[]")]
@@ -116,8 +125,20 @@ fn visit(
   let mut batch_sender = BatchSender::new(tx);
 
   Box::new(move |entry_result| {
-    let Ok(entry) = entry_result else {
-      return WalkState::Continue;
+    let entry = match entry_result {
+      Ok(entry) => entry,
+      Err(err) => {
+        // Report the error and continue walking
+        // The error message from ignore crate already includes the path
+        let error = WalkItem::Error {
+          path: None,
+          message: err.to_string(),
+        };
+        if batch_sender.send(error).is_err() {
+          return WalkState::Quit;
+        }
+        return WalkState::Continue;
+      }
     };
 
     let Some(ft) = entry.file_type() else {
@@ -142,11 +163,15 @@ fn visit(
       return WalkState::Continue;
     }
 
-    let Some(path) = path.to_str() else {
+    let Some(path_str) = path.to_str() else {
       return WalkState::Continue;
     };
 
-    if batch_sender.send(path).is_err() {
+    let item = WalkItem::Entry {
+      path: path_str.to_string(),
+    };
+
+    if batch_sender.send(item).is_err() {
       return WalkState::Quit;
     }
 
