@@ -1,3 +1,4 @@
+use serde::Serialize;
 use tokio::sync::mpsc::Sender;
 
 const BATCH_SIZE: usize = 4096;
@@ -16,7 +17,7 @@ impl BatchSender {
     Self { count: 0, buf, tx }
   }
 
-  pub fn send(&mut self, item: &str) -> Result<(), ()> {
+  pub fn send<T: Serialize>(&mut self, item: &T) -> Result<(), ()> {
     if self.count > 0 {
       self.buf.push(b',');
     }

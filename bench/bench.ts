@@ -43,7 +43,9 @@ async function main(): Promise<void> {
     specifiedDatasets.push(arg);
   }
 
-  const datasets = specifiedDatasets.length > 0 ? specifiedDatasets : DATASETS.map((d) => d.name);
+  const defaultDatasets = DATASETS.filter((d) => d.default).map((d) => d.name);
+
+  const datasets = specifiedDatasets.length > 0 ? specifiedDatasets : defaultDatasets;
 
   console.log(`Benchmarking file walk on datasets: ${datasets.join(', ')}`);
 
