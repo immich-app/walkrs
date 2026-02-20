@@ -1,3 +1,4 @@
+use crate::WalkItem;
 use tokio::sync::mpsc::Sender;
 
 const BATCH_SIZE: usize = 4096;
@@ -16,11 +17,11 @@ impl BatchSender {
     Self { count: 0, buf, tx }
   }
 
-  pub fn send(&mut self, item: &str) -> Result<(), ()> {
+  pub fn send(&mut self, item: WalkItem) -> Result<(), ()> {
     if self.count > 0 {
       self.buf.push(b',');
     }
-    serde_json::to_writer(&mut self.buf, item).unwrap();
+    serde_json::to_writer(&mut self.buf, &item).expect("WalkItem serialization should never fail");
     self.count += 1;
     if self.count >= BATCH_SIZE {
       self.flush()?;
