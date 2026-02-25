@@ -221,9 +221,7 @@ describe('walk', () => {
 
         const actual: string[] = [];
         for await (const batch of walk(adjustedOptions)) {
-          // Filter for entries only (ignore errors) and extract paths
-          const paths = batch.filter((item) => item.type === 'entry').map((item) => item.path);
-          actual.push(...paths);
+          actual.push(...batch.files);
         }
         const expected = Object.entries(files)
           .filter((entry) => entry[1])
@@ -270,13 +268,8 @@ describe('walk', () => {
       const errors: Array<{ path?: string; message: string }> = [];
 
       for await (const batch of walk(options)) {
-        for (const item of batch) {
-          if (item.type === 'entry') {
-            entries.push(item.path);
-          } else if (item.type === 'error') {
-            errors.push({ path: item.path, message: item.message });
-          }
-        }
+        entries.push(...batch.files);
+        errors.push(...batch.errors);
       }
 
       // Should have found the accessible file
@@ -302,30 +295,22 @@ describe('walk', () => {
         extensions: ['.jpg'],
       };
 
-      const entries: string[] = [];
+      const files: string[] = [];
       const errors: Array<{ path?: string; message: string }> = [];
 
       for await (const batch of walk(options)) {
-        for (const item of batch) {
-          if (item.type === 'entry') {
-            entries.push(item.path);
-          } else if (item.type === 'error') {
-            errors.push({ path: item.path, message: item.message });
-          }
-        }
+        files.push(...batch.files);
+        errors.push(...batch.errors);
       }
 
-      // Should have found all files (directory listing doesn't require file read permissions)
-      expect(entries).toContain(path.join(tempDir, 'photos', 'accessible1.jpg'));
-      expect(entries).toContain(path.join(tempDir, 'photos', 'accessible2.jpg'));
+      expect(files).toContain(path.join(tempDir, 'photos', 'accessible1.jpg'));
+      expect(files).toContain(path.join(tempDir, 'photos', 'accessible2.jpg'));
 
       // File is still listed even with 0o000 permissions (directory walk only needs directory read permission)
-      expect(entries).toContain(path.join(tempDir, 'photos', 'restricted.jpg'));
+      expect(files).toContain(path.join(tempDir, 'photos', 'restricted.jpg'));
 
-      // No errors expected since we're only walking, not reading file contents
       expect(errors.length).toBe(0);
 
-      // Restore permissions for cleanup
       await fs.chmod(path.join(tempDir, 'photos', 'restricted.jpg'), 0o644);
     });
   });
