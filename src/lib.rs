@@ -15,12 +15,15 @@ use batch_sender::BatchSender;
 use extension_filter::ExtensionFilter;
 
 #[derive(Debug, Clone, serde::Serialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub(crate) enum WalkItem {
-  #[serde(rename = "entry")]
-  Entry { path: String },
-  #[serde(rename = "error")]
-  Error { path: Option<String>, message: String },
+pub(crate) struct WalkError {
+  pub path: Option<String>,
+  pub message: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct WalkBatch {
+  pub files: Vec<String>,
+  pub errors: Vec<WalkError>,
 }
 
 #[napi(object)]
@@ -130,11 +133,11 @@ fn visit(
       Err(err) => {
         // Report the error and continue walking
         // The error message from ignore crate already includes the path
-        let error = WalkItem::Error {
+        let error = WalkError {
           path: None,
           message: err.to_string(),
         };
-        if batch_sender.send(error).is_err() {
+        if batch_sender.send_error(error).is_err() {
           return WalkState::Quit;
         }
         return WalkState::Continue;
@@ -167,11 +170,7 @@ fn visit(
       return WalkState::Continue;
     };
 
-    let item = WalkItem::Entry {
-      path: path_str.to_string(),
-    };
-
-    if batch_sender.send(item).is_err() {
+    if batch_sender.send_entry(path_str.to_string()).is_err() {
       return WalkState::Quit;
     }
 

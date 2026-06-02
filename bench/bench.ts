@@ -25,7 +25,10 @@ async function run(datasetPath: string, benchmarkOptions?: BenchmarkOptions): Pr
 
   let fileCount = 0;
   for await (const batch of walk(walkOptions)) {
-    fileCount += batch.length;
+    if (batch.errors.length > 0) {
+      throw new Error(`Walk encountered errors: ${batch.errors.map((e) => e.message).join(', ')}`);
+    }
+    fileCount += batch.files.length;
   }
 
   return fileCount;
