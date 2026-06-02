@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.0.14](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.13...walkrs-v0.0.14) (2026-06-02)
+
+
+### Miscellaneous
+
+* create renovate.json ([89836f6](https://github.com/immich-app/walkrs/commit/89836f6050580c64f4a714ab79a126b1509ec64d))
+* modify .github/FUNDING.yml ([8e4fecc](https://github.com/immich-app/walkrs/commit/8e4fecc1b27a8dac477264c083efce5313760fb7))
+* modify .github/workflows/org-zizmor.yml ([6d7009a](https://github.com/immich-app/walkrs/commit/6d7009a7ff081c60e48a080cf6bfd6cf40870264))
+* modify CODE_OF_CONDUCT.md ([be212da](https://github.com/immich-app/walkrs/commit/be212daa790d8df26ab514d9796a2c8fa003dcb9))
+* modify SECURITY.md ([f9c15b1](https://github.com/immich-app/walkrs/commit/f9c15b18c5500dc4e20829c6ca88ad7f2c36b4b7))
+
 ## [0.0.13](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.12...walkrs-v0.0.13) (2026-02-20)
 
 
