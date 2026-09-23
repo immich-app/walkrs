@@ -38,6 +38,9 @@ jobs:
       - name: Check rust formatting
         run: pnpm rust:format
         if: ${{ !cancelled() }}
+      - name: Run Rust tests
+        run: cargo test
+        if: ${{ !cancelled() }}
       - name: Check ts linting
         run: pnpm ts:lint
         if: ${{ !cancelled() }}
