@@ -3,16 +3,16 @@ mod extension_filter;
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use globset::{GlobSet, GlobSetBuilder};
 use ignore::{DirEntry, WalkBuilder, WalkState};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
-use serde::Serialize;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::{self, Sender};
 
-use batch_sender::BatchSender;
+use batch_sender::{BatchSender, FileMetadata};
 use extension_filter::ExtensionFilter;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -128,12 +128,34 @@ fn build_exclusion_set(exclusion_patterns: &[String]) -> Result<GlobSet> {
     .map_err(|e| Error::new(Status::InvalidArg, format!("Failed to build exclusion patterns: {e}")))
 }
 
-#[derive(Serialize)]
-pub struct FileEntry {
-  pub path: String,
-  pub modified: String,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub created: Option<String>,
+// JSON numbers must remain exact when parsed as JavaScript numbers.
+const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+
+fn timestamp_millis(time: SystemTime) -> std::result::Result<i64, &'static str> {
+  let (duration, sign) = match time.duration_since(UNIX_EPOCH) {
+    Ok(duration) => (duration, 1),
+    Err(error) => (error.duration(), -1),
+  };
+  let millis = duration.as_millis();
+  if millis > u128::from(MAX_SAFE_INTEGER) {
+    return Err("Modification time exceeds the JavaScript safe integer range");
+  }
+  Ok((millis as i64) * sign)
+}
+
+fn read_metadata(entry: &DirEntry) -> std::result::Result<FileMetadata, String> {
+  let metadata = entry
+    .metadata()
+    .map_err(|error| format!("Failed to read metadata: {error}"))?;
+  let size = metadata.len();
+  if size > MAX_SAFE_INTEGER {
+    return Err("File size exceeds the JavaScript safe integer range".into());
+  }
+  let modified = metadata
+    .modified()
+    .map_err(|error| format!("Failed to read modification time: {error}"))?;
+  let modified = timestamp_millis(modified).map_err(str::to_owned)?;
+  Ok(FileMetadata { size, modified })
 }
 
 fn visit(
@@ -142,7 +164,7 @@ fn visit(
   extension_filter: Arc<ExtensionFilter>,
   include_metadata: bool,
 ) -> Box<dyn FnMut(std::result::Result<DirEntry, ignore::Error>) -> WalkState + Send> {
-  let mut batch_sender = BatchSender::new(tx);
+  let mut batch_sender = BatchSender::new(tx, include_metadata);
 
   Box::new(move |entry_result| {
     let entry = match entry_result {
@@ -187,36 +209,33 @@ fn visit(
       return WalkState::Continue;
     };
 
-    if include_metadata {
-      if let Ok(metadata) = entry.metadata() {
-        let modified = metadata
-          .modified()
-          .unwrap_or_else(|e| panic!("Failed to read modified time for {path_str}: {e}"))
-          .duration_since(std::time::UNIX_EPOCH)
-          .unwrap_or_else(|e| {
-            panic!("Failed to convert modified time for {path_str} to unix time: {e}")
-          })
-          .as_secs()
-          .to_string();
-        let created = metadata
-          .created()
-          .ok()
-          .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-          .map(|d| d.as_secs().to_string());
-
-        let file_entry = FileEntry {
-          path: path_str.to_string(),
-          modified,
-          created,
-        };
-        if batch_sender.send_entry(&file_entry).is_err() {
-          return WalkState::Quit;
+    let metadata = if include_metadata {
+      match read_metadata(&entry) {
+        Ok(metadata) => Some(metadata),
+        Err(message) => {
+          if batch_sender
+            .send_error(WalkError {
+              path: Some(path_str.into()),
+              message,
+            })
+            .is_err()
+          {
+            return WalkState::Quit;
+          }
+          return WalkState::Continue;
         }
       }
-    } else if batch_sender.send_entry(&path_str).is_err() {
+    } else {
+      None
+    };
+
+    if batch_sender.send_entry(path_str, metadata).is_err() {
       return WalkState::Quit;
     }
 
     WalkState::Continue
   })
 }
+
+#[cfg(test)]
+mod tests;

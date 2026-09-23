@@ -3,17 +3,14 @@ import type { WalkOptions } from '../dist/index.js';
 export type { WalkOptions } from '../dist/index.js';
 
 export type WalkError = {
-  path?: string;
+  path?: string | null;
   message: string;
 };
 
-export interface WalkedFileEntry {
-  path: string;
-  modified: Date;
-}
-
 export type WalkBatch = {
-  files: (string | WalkedFileEntry)[];
+  files: string[];
+  size: number[] | null;
+  modified: number[] | null;
   errors: WalkError[];
 };
 

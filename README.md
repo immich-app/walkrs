@@ -22,7 +22,7 @@ import { walk } from '@immich/walkrs';
 // Simple usage - walk a directory
 const files: string[] = [];
 for await (const batch of walk({ paths: ['/path/to/scan'] })) {
-  files.push(...JSON.parse(batch));
+  files.push(...batch.files);
 }
 
 // Advanced usage with filtering
@@ -33,9 +33,26 @@ for await (const batch of walk({
   exclusionPatterns: ['**/.stfolder/**'],
   includeHidden: false,
 })) {
-  photos.push(...JSON.parse(batch));
+  photos.push(...batch.files);
+}
+
+// Include file sizes and modification times
+for await (const batch of walk({ paths: ['/photos'], includeMetadata: true })) {
+  if (batch.size !== null && batch.modified !== null) {
+    for (let i = 0; i < batch.files.length; i++) {
+      // Path, size in bytes, and modification time in Unix milliseconds
+      console.log(batch.files[i], batch.size[i], batch.modified[i]);
+    }
+  }
+  for (const error of batch.errors) {
+    console.error(error.path, error.message);
+  }
 }
 ```
+
+Every batch has `{ files, size, modified, errors }`. By default, `size` and `modified` are `null`, and the walker does not request file metadata. Set `includeMetadata: true` to get parallel integer arrays: `size[i]` is the byte size of `files[i]`, and `modified[i]` is its modification time in Unix milliseconds, truncated toward zero. Creation time is not collected.
+
+The metadata arrays always have the same length and order as `files`. If metadata cannot be read, that file is omitted from all three arrays and an entry with its path is added to `errors`. Values outside JavaScript's safe integer range are also reported as errors. A batch containing only errors has empty metadata arrays when metadata is enabled. An empty walk produces no batches. File order is unspecified, and metadata is a snapshot that can change after the file is visited.
 
 ## Performance
 
@@ -53,7 +70,7 @@ Before running benchmarks, you need to create benchmark datasets. This is a one-
 pnpm run bench:setup
 ```
 
-This creates datasets in the `bench/datasets/` directory:
+This creates datasets in the platform's cache directory, or the directory specified by `BENCH_DIR`:
 
 - `10` - 10 files
 - `100` - 100 files
@@ -66,6 +83,8 @@ This creates datasets in the `bench/datasets/` directory:
 ### Running Benchmarks
 
 Run benchmarks against any dataset:
+
+The benchmark compares paths-only and metadata-enabled walks at each thread count, along with filtering scenarios.
 
 ```bash
 # Run with default settings on all datasets

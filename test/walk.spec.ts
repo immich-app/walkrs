@@ -221,6 +221,8 @@ describe('walk', () => {
 
         const actual: string[] = [];
         for await (const batch of walk(adjustedOptions)) {
+          expect(batch.size).toBeNull();
+          expect(batch.modified).toBeNull();
           actual.push(...batch.files);
         }
         const expected = Object.entries(files)
@@ -231,6 +233,135 @@ describe('walk', () => {
       });
     });
   }
+
+  describe('metadata', () => {
+    let tempDir: string;
+
+    beforeEach(async () => {
+      tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'walkrs-metadata-'));
+    });
+
+    afterEach(async () => {
+      await fs.chmod(path.join(tempDir, 'restricted'), 0o755).catch(() => {});
+      await fs.rm(tempDir, { recursive: true, force: true });
+    });
+
+    it.each([1, 2, 0])('aligns size and millisecond timestamps with paths using %i threads', async (threads) => {
+      const expected = new Map<string, { size: number; modified: number }>();
+      for (const [name, content, time] of [
+        ['empty.jpg', '', new Date(1_700_000_000_123)],
+        ['quoted"雪.jpg', 'hello world', new Date(1_700_000_000_789)],
+        ['ignored.txt', 'ignored', new Date(1_700_000_000_456)],
+      ] as const) {
+        const filename = path.join(tempDir, name);
+        await fs.writeFile(filename, content);
+        await fs.utimes(filename, time, time);
+        const stat = await fs.stat(filename, { bigint: true });
+        if (name.endsWith('.jpg')) {
+          expected.set(filename, { size: Number(stat.size), modified: Number(stat.mtimeNs / 1_000_000n) });
+        }
+      }
+
+      const seen = new Set<string>();
+      for await (const batch of walk({ paths: [tempDir], includeMetadata: true, extensions: ['jpg'], threads })) {
+        expect(batch.errors).toEqual([]);
+        expect(batch.size).toHaveLength(batch.files.length);
+        expect(batch.modified).toHaveLength(batch.files.length);
+        for (const [index, filename] of batch.files.entries()) {
+          expect({ size: batch.size![index], modified: batch.modified![index] }).toEqual(expected.get(filename));
+          expect(Number.isSafeInteger(batch.size![index])).toBe(true);
+          expect(Number.isSafeInteger(batch.modified![index])).toBe(true);
+          seen.add(filename);
+        }
+      }
+      expect(seen).toEqual(new Set(expected.keys()));
+    });
+
+    it('supports modification times before the Unix epoch', async () => {
+      const filename = path.join(tempDir, 'old.jpg');
+      await fs.writeFile(filename, 'old');
+      await fs.utimes(filename, new Date(-1234), new Date(-1234));
+      const stat = await fs.stat(filename, { bigint: true });
+      const batches = [];
+      for await (const batch of walk({ paths: [tempDir], includeMetadata: true })) {
+        batches.push(batch);
+      }
+      expect(batches).toEqual([
+        {
+          files: [filename],
+          size: [3],
+          modified: [Number(stat.mtimeNs / 1_000_000n)],
+          errors: [],
+        },
+      ]);
+    });
+
+    it('keeps metadata aligned across full and partial batches', async () => {
+      const names = Array.from({ length: 4101 }, (_, i) => `${i}.jpg`);
+      await createTestFiles(tempDir, names);
+      const seen = new Set<string>();
+      const lengths = [];
+      for await (const batch of walk({ paths: [tempDir], threads: 1, includeMetadata: true })) {
+        expect(batch.errors).toEqual([]);
+        expect(batch.size).toEqual(Array.from({ length: batch.files.length }, () => 0));
+        expect(batch.modified).toHaveLength(batch.files.length);
+        expect(batch.modified!.every((value) => Number.isSafeInteger(value))).toBe(true);
+        lengths.push(batch.files.length);
+        for (const filename of batch.files) {
+          expect(seen.has(filename)).toBe(false);
+          seen.add(filename);
+        }
+      }
+      expect(lengths).toEqual([4096, 5]);
+      expect(seen).toEqual(new Set(names.map((name) => path.join(tempDir, name))));
+    });
+
+    it('reports metadata failures without dropping successful files or misaligning columns', async () => {
+      const restricted = path.join(tempDir, 'restricted');
+      const inaccessible = path.join(restricted, 'image.jpg');
+      const accessible = path.join(tempDir, 'image.jpg');
+      await createTestFiles(tempDir, ['restricted/image.jpg', 'image.jpg']);
+      // Read permission allows enumeration; lack of search permission prevents stat on its children.
+      await fs.chmod(restricted, 0o444);
+
+      const listed = [];
+      for await (const batch of walk({ paths: [tempDir], includeMetadata: false })) {
+        listed.push(...batch.files);
+        expect(batch.size).toBeNull();
+        expect(batch.modified).toBeNull();
+      }
+      expect(listed).toContain(inaccessible);
+
+      const found = [];
+      const errors = [];
+      for await (const batch of walk({ paths: [tempDir], includeMetadata: true })) {
+        expect(batch.size).toHaveLength(batch.files.length);
+        expect(batch.modified).toHaveLength(batch.files.length);
+        found.push(...batch.files);
+        errors.push(...batch.errors);
+      }
+      expect(found).toEqual([accessible]);
+      expect(errors).toEqual(expect.arrayContaining([expect.objectContaining({ path: inaccessible })]));
+    });
+
+    it('uses empty arrays for an error-only metadata batch', async () => {
+      const batches = [];
+      for await (const batch of walk({ paths: [path.join(tempDir, 'missing')], includeMetadata: true })) {
+        batches.push(batch);
+      }
+      expect(batches).toHaveLength(1);
+      expect(batches[0]).toMatchObject({ files: [], size: [], modified: [] });
+      expect(batches[0].errors).toHaveLength(1);
+    });
+
+    it('returns no batches for an empty metadata walk', async () => {
+      const batches = [];
+      for await (const batch of walk({ paths: [], includeMetadata: true })) {
+        batches.push(batch);
+      }
+      expect(batches).toEqual([]);
+    });
+  });
 
   describe('error handling', () => {
     let tempDir: string;
@@ -265,7 +396,7 @@ describe('walk', () => {
       };
 
       const entries: string[] = [];
-      const errors: Array<{ path?: string; message: string }> = [];
+      const errors: Array<{ path?: string | null; message: string }> = [];
 
       for await (const batch of walk(options)) {
         entries.push(...batch.files);
@@ -296,7 +427,7 @@ describe('walk', () => {
       };
 
       const files: string[] = [];
-      const errors: Array<{ path?: string; message: string }> = [];
+      const errors: Array<{ path?: string | null; message: string }> = [];
 
       for await (const batch of walk(options)) {
         files.push(...batch.files);
