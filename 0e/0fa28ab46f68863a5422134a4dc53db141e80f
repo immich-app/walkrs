@@ -1,0 +1,19 @@
+lib/index.js
+  s_a191ff92f5b4ff::t_59a61caef847b2 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "0e0fa28ab46f68863a5422134a4dc53db141e80f",
+  "prompts": {},
+  "sessions": {
+    "s_a191ff92f5b4ff": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0d00d-d77c-7720-b65c-397e7f614ef2",
+        "model": "unknown"
+      },
+      "human_author": "Jonathan Jogenfors <jonathan@jogenfors.se>"
+    }
+  }
+}
