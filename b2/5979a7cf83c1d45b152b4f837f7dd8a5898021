@@ -1,0 +1,33 @@
+.github/workflows/test.yml
+  s_a191ff92f5b4ff::t_251dddf50eb2cc 53-55
+bench/bench.ts
+  s_a191ff92f5b4ff::t_67fa59fad4089b 3
+bench/setup.ts
+  s_a191ff92f5b4ff::t_14e5b7bb06d545 2
+eslint.config.mjs
+  s_a191ff92f5b4ff::t_ce5302b87d5b41 27
+lib/index.d.ts
+  s_a191ff92f5b4ff::t_638ff5b7dca553 1-3
+package.json
+  s_a191ff92f5b4ff::t_4616d50458300e 39
+test/vitest.config.mjs
+  s_a191ff92f5b4ff::t_1c6871f3c0b9bb 1-2,7-8,11
+tsconfig.json
+  s_a191ff92f5b4ff::t_3bfc5d8bca62ce 3-5,14-15,17-19,22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b25979a7cf83c1d45b152b4f837f7dd8a5898021",
+  "prompts": {},
+  "sessions": {
+    "s_a191ff92f5b4ff": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0d00d-d77c-7720-b65c-397e7f614ef2",
+        "model": "unknown"
+      },
+      "human_author": "Jonathan Jogenfors <jonathan@jogenfors.se>"
+    }
+  }
+}
