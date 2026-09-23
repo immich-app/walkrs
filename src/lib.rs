@@ -20,12 +20,6 @@ pub(crate) struct WalkError {
   pub message: String,
 }
 
-#[derive(Debug, serde::Serialize)]
-pub(crate) struct WalkBatch {
-  pub files: Vec<String>,
-  pub errors: Vec<WalkError>,
-}
-
 #[napi(object)]
 pub struct WalkOptions {
   #[napi(ts_type = "string[]")]
@@ -170,7 +164,7 @@ fn visit(
       return WalkState::Continue;
     };
 
-    if batch_sender.send_entry(path_str.to_string()).is_err() {
+    if batch_sender.send_entry(path_str).is_err() {
       return WalkState::Quit;
     }
 
