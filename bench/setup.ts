@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { BENCH_DIR, DATASETS, DatasetConfig } from 'bench/constants';
+import { BENCH_DIR, DATASETS, type DatasetConfig } from 'bench/constants.js';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 
