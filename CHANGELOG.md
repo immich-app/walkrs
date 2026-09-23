@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.0.14](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.13...walkrs-v0.0.14) (2026-09-23)
+
+
+### Bug Fixes
+
+* separate data and error arrays ([#49](https://github.com/immich-app/walkrs/issues/49)) ([41a2a21](https://github.com/immich-app/walkrs/commit/41a2a21bd76262efc1425758e576e9e3dd94b785))
+
+
+### Miscellaneous
+
+* create renovate.json ([89836f6](https://github.com/immich-app/walkrs/commit/89836f6050580c64f4a714ab79a126b1509ec64d))
+* **deps:** update dependency @types/node to ^24.13.5 ([#56](https://github.com/immich-app/walkrs/issues/56)) ([f25325a](https://github.com/immich-app/walkrs/commit/f25325ac2d2a2b50f610b1b8fa959d8c2a1d5189))
+* **deps:** update node.js to v24.21.0 ([#58](https://github.com/immich-app/walkrs/issues/58)) ([5450751](https://github.com/immich-app/walkrs/commit/54507514b4c95a8bda8fc6e1fe73f5cd049b6578))
+* modify .github/FUNDING.yml ([8e4fecc](https://github.com/immich-app/walkrs/commit/8e4fecc1b27a8dac477264c083efce5313760fb7))
+* modify .github/workflows/org-zizmor.yml ([6d7009a](https://github.com/immich-app/walkrs/commit/6d7009a7ff081c60e48a080cf6bfd6cf40870264))
+* modify CODE_OF_CONDUCT.md ([be212da](https://github.com/immich-app/walkrs/commit/be212daa790d8df26ab514d9796a2c8fa003dcb9))
+* modify SECURITY.md ([f9c15b1](https://github.com/immich-app/walkrs/commit/f9c15b18c5500dc4e20829c6ca88ad7f2c36b4b7))
+
 ## [0.0.13](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.12...walkrs-v0.0.13) (2026-02-20)
 
 
