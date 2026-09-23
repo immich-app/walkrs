@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
-    "module": "ESNext",
-    "lib": ["ES2023"],
+    "target": "ES2024",
+    "module": "NodeNext",
+    "lib": ["ES2024"],
     "declaration": true,
     "declarationDir": "./dist",
     "outDir": "./dist",
@@ -11,11 +11,14 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "moduleResolution": "bundler",
+    "moduleResolution": "NodeNext",
+    "isolatedModules": true,
     "allowSyntheticDefaultImports": true,
-    "baseUrl": ".",
+    "paths": {
+      "bench/*": ["./bench/*"]
+    },
     "rootDir": "."
   },
-  "include": ["test/**/*.ts", "bench/**/*.ts", "types/**/*.d.ts"],
+  "include": ["test/**/*.ts", "bench/**/*.ts", "example/**/*.ts", "lib/**/*.d.ts", "types/**/*.d.ts"],
   "exclude": ["node_modules", "dist", "target"]
 }

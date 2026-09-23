@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { walk } from '@immich/walkrs';
-import { BENCH_DIR, DATASETS } from 'bench/constants';
+import { BENCH_DIR, DATASETS } from 'bench/constants.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
