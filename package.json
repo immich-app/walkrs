@@ -36,6 +36,7 @@
     "build:debug": "napi build --platform --esm -o dist",
     "build:release": "napi build --platform --release --esm -o dist",
     "test": "vitest --config test/vitest.config.mjs",
+    "check": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "ts:check": "tsc --noEmit",
     "ts:format": "prettier --check .",

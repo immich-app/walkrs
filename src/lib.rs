@@ -3,6 +3,7 @@ mod extension_filter;
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use globset::{GlobSet, GlobSetBuilder};
 use ignore::{DirEntry, WalkBuilder, WalkState};
@@ -11,7 +12,7 @@ use napi_derive::napi;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::{self, Sender};
 
-use batch_sender::BatchSender;
+use batch_sender::{BatchSender, FileMetadata};
 use extension_filter::ExtensionFilter;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -36,6 +37,9 @@ pub struct WalkOptions {
 
   #[napi(ts_type = "number | undefined")]
   pub threads: Option<u32>,
+
+  #[napi(ts_type = "boolean | undefined")]
+  pub include_metadata: Option<bool>,
 }
 
 #[napi(async_iterator)]
@@ -86,8 +90,18 @@ pub fn walk(options: WalkOptions) -> Result<Walk> {
     .git_exclude(false);
 
   let walker = walk_builder.build_parallel();
+  let include_metadata = options.include_metadata.unwrap_or(false);
 
-  std::thread::spawn(move || walker.run(|| visit(tx.clone(), Arc::clone(&exclusion_set), Arc::clone(&extension_set))));
+  std::thread::spawn(move || {
+    walker.run(|| {
+      visit(
+        tx.clone(),
+        Arc::clone(&exclusion_set),
+        Arc::clone(&extension_set),
+        include_metadata,
+      )
+    })
+  });
 
   Ok(Walk {
     rx: Arc::new(Mutex::new(rx)),
@@ -114,12 +128,43 @@ fn build_exclusion_set(exclusion_patterns: &[String]) -> Result<GlobSet> {
     .map_err(|e| Error::new(Status::InvalidArg, format!("Failed to build exclusion patterns: {e}")))
 }
 
+// JSON numbers must remain exact when parsed as JavaScript numbers.
+const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+
+fn timestamp_millis(time: SystemTime) -> std::result::Result<i64, &'static str> {
+  let (duration, sign) = match time.duration_since(UNIX_EPOCH) {
+    Ok(duration) => (duration, 1),
+    Err(error) => (error.duration(), -1),
+  };
+  let millis = duration.as_millis();
+  if millis > u128::from(MAX_SAFE_INTEGER) {
+    return Err("Modification time exceeds the JavaScript safe integer range");
+  }
+  Ok((millis as i64) * sign)
+}
+
+fn read_metadata(entry: &DirEntry) -> std::result::Result<FileMetadata, String> {
+  let metadata = entry
+    .metadata()
+    .map_err(|error| format!("Failed to read metadata: {error}"))?;
+  let size = metadata.len();
+  if size > MAX_SAFE_INTEGER {
+    return Err("File size exceeds the JavaScript safe integer range".into());
+  }
+  let modified = metadata
+    .modified()
+    .map_err(|error| format!("Failed to read modification time: {error}"))?;
+  let modified = timestamp_millis(modified).map_err(str::to_owned)?;
+  Ok(FileMetadata { size, modified })
+}
+
 fn visit(
   tx: Sender<Vec<u8>>,
   exclusion_set: Arc<GlobSet>,
   extension_filter: Arc<ExtensionFilter>,
+  include_metadata: bool,
 ) -> Box<dyn FnMut(std::result::Result<DirEntry, ignore::Error>) -> WalkState + Send> {
-  let mut batch_sender = BatchSender::new(tx);
+  let mut batch_sender = BatchSender::new(tx, include_metadata);
 
   Box::new(move |entry_result| {
     let entry = match entry_result {
@@ -164,10 +209,33 @@ fn visit(
       return WalkState::Continue;
     };
 
-    if batch_sender.send_entry(path_str).is_err() {
+    let metadata = if include_metadata {
+      match read_metadata(&entry) {
+        Ok(metadata) => Some(metadata),
+        Err(message) => {
+          if batch_sender
+            .send_error(WalkError {
+              path: Some(path_str.into()),
+              message,
+            })
+            .is_err()
+          {
+            return WalkState::Quit;
+          }
+          return WalkState::Continue;
+        }
+      }
+    } else {
+      None
+    };
+
+    if batch_sender.send_entry(path_str, metadata).is_err() {
       return WalkState::Quit;
     }
 
     WalkState::Continue
   })
 }
+
+#[cfg(test)]
+mod tests;
