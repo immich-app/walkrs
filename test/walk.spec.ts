@@ -166,10 +166,10 @@ const tests: TestCase[] = [
       extensions: ['.jpg', '.jpeg', '.tiff', '.tif', '.dng', '.nef'],
     },
     files: {
-      '/photos/image.jpg': true,
-      '/photos/image.Jpg': true,
-      '/photos/image.jpG': true,
-      '/photos/image.JPG': true,
+      '/photos/image1.jpg': true,
+      '/photos/image2.Jpg': true,
+      '/photos/image3.jpG': true,
+      '/photos/image4.JPG': true,
       '/photos/image.jpEg': true,
       '/photos/image.TIFF': true,
       '/photos/image.tif': true,
@@ -221,7 +221,7 @@ describe('walk', () => {
 
         const actual: string[] = [];
         for await (const batch of walk(adjustedOptions)) {
-          actual.push(...batch);
+          actual.push(...batch.files);
         }
         const expected = Object.entries(files)
           .filter((entry) => entry[1])
@@ -231,4 +231,87 @@ describe('walk', () => {
       });
     });
   }
+
+  describe('error handling', () => {
+    let tempDir: string;
+
+    beforeEach(async () => {
+      tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'walkrs-test-'));
+    });
+
+    afterEach(async () => {
+      // Restore permissions before cleanup
+      try {
+        await fs.chmod(path.join(tempDir, 'restricted'), 0o755);
+      } catch {
+        // Ignore if directory doesn't exist
+      }
+      await fs.rm(tempDir, { recursive: true, force: true });
+    });
+
+    it('reports access denied errors for restricted directory', async () => {
+      // Create a directory structure with a restricted directory
+      await fs.mkdir(path.join(tempDir, 'accessible'), { recursive: true });
+      await fs.mkdir(path.join(tempDir, 'restricted'), { recursive: true });
+      await fs.writeFile(path.join(tempDir, 'accessible', 'file1.jpg'), '');
+      await fs.writeFile(path.join(tempDir, 'restricted', 'file2.jpg'), '');
+
+      // Remove all permissions from the restricted directory
+      await fs.chmod(path.join(tempDir, 'restricted'), 0o000);
+
+      const options: WalkOptions = {
+        paths: [tempDir],
+        extensions: ['.jpg'],
+      };
+
+      const entries: string[] = [];
+      const errors: Array<{ path?: string; message: string }> = [];
+
+      for await (const batch of walk(options)) {
+        entries.push(...batch.files);
+        errors.push(...batch.errors);
+      }
+
+      // Should have found the accessible file
+      expect(entries).toContain(path.join(tempDir, 'accessible', 'file1.jpg'));
+
+      // Should have reported at least one error for the restricted directory
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors.some((error) => error.message.toLowerCase().includes('permission denied'))).toBe(true);
+    });
+
+    it('can still enumerate files with restricted permissions', async () => {
+      // Create a directory with multiple files, one of which is restricted
+      await fs.mkdir(path.join(tempDir, 'photos'), { recursive: true });
+      await fs.writeFile(path.join(tempDir, 'photos', 'accessible1.jpg'), '');
+      await fs.writeFile(path.join(tempDir, 'photos', 'restricted.jpg'), '');
+      await fs.writeFile(path.join(tempDir, 'photos', 'accessible2.jpg'), '');
+
+      // Remove all permissions from a single file
+      await fs.chmod(path.join(tempDir, 'photos', 'restricted.jpg'), 0o000);
+
+      const options: WalkOptions = {
+        paths: [tempDir],
+        extensions: ['.jpg'],
+      };
+
+      const files: string[] = [];
+      const errors: Array<{ path?: string; message: string }> = [];
+
+      for await (const batch of walk(options)) {
+        files.push(...batch.files);
+        errors.push(...batch.errors);
+      }
+
+      expect(files).toContain(path.join(tempDir, 'photos', 'accessible1.jpg'));
+      expect(files).toContain(path.join(tempDir, 'photos', 'accessible2.jpg'));
+
+      // File is still listed even with 0o000 permissions (directory walk only needs directory read permission)
+      expect(files).toContain(path.join(tempDir, 'photos', 'restricted.jpg'));
+
+      expect(errors.length).toBe(0);
+
+      await fs.chmod(path.join(tempDir, 'photos', 'restricted.jpg'), 0o644);
+    });
+  });
 });

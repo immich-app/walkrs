@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.13](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.12...walkrs-v0.0.13) (2026-02-20)
+
+
+### Features
+
+* handle errors ([#47](https://github.com/immich-app/walkrs/issues/47)) ([495333e](https://github.com/immich-app/walkrs/commit/495333ed4a1ab78652f7ac9361dd072b541567a3))
+
 ## [0.0.12](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.11...walkrs-v0.0.12) (2026-02-18)
 
 

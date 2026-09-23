@@ -15,6 +15,12 @@ use tokio::sync::mpsc::{self, Sender};
 use batch_sender::BatchSender;
 use extension_filter::ExtensionFilter;
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct WalkError {
+  pub path: Option<String>,
+  pub message: String,
+}
+
 #[napi(object)]
 pub struct WalkOptions {
   #[napi(ts_type = "string[]")]
@@ -139,8 +145,20 @@ fn visit(
   let mut batch_sender = BatchSender::new(tx);
 
   Box::new(move |entry_result| {
-    let Ok(entry) = entry_result else {
-      return WalkState::Continue;
+    let entry = match entry_result {
+      Ok(entry) => entry,
+      Err(err) => {
+        // Report the error and continue walking
+        // The error message from ignore crate already includes the path
+        let error = WalkError {
+          path: None,
+          message: err.to_string(),
+        };
+        if batch_sender.send_error(error).is_err() {
+          return WalkState::Quit;
+        }
+        return WalkState::Continue;
+      }
     };
 
     let Some(ft) = entry.file_type() else {
@@ -191,11 +209,11 @@ fn visit(
           modified,
           created,
         };
-        if batch_sender.send(&file_entry).is_err() {
+        if batch_sender.send_entry(&file_entry).is_err() {
           return WalkState::Quit;
         }
       }
-    } else if batch_sender.send(&path_str).is_err() {
+    } else if batch_sender.send_entry(&path_str).is_err() {
       return WalkState::Quit;
     }
 
