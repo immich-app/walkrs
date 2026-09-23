@@ -1,0 +1,31 @@
+.github/workflows/test.yml
+  s_5314d5a1c1aa50::t_4e2743e09ddb86 41-43
+src/lib.rs
+  s_2f16b1e05b9d4d::t_3f7871f8b0e6a2 167
+test/walk.spec.ts
+  s_5314d5a1c1aa50::t_e6596438a38c3a 169-172
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f2327764fea2b9cb8a310b5b0a490f61cb4bfa31",
+  "prompts": {},
+  "sessions": {
+    "s_2f16b1e05b9d4d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0cf78-e1d5-7a62-bd5b-bd2d8e48c665",
+        "model": "unknown"
+      },
+      "human_author": "Jonathan Jogenfors <jonathan@jogenfors.se>"
+    },
+    "s_5314d5a1c1aa50": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0cf78-768b-7b23-842b-23b07dced200",
+        "model": "unknown"
+      },
+      "human_author": "Jonathan Jogenfors <jonathan@jogenfors.se>"
+    }
+  }
+}
