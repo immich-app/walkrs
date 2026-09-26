@@ -50,6 +50,9 @@ jobs:
       - name: Build
         run: pnpm build
         if: ${{ !cancelled() }}
+      - name: Check TypeScript types
+        run: pnpm check
+        if: ${{ !cancelled() }}
       - name: Run tests
         run: pnpm test
         if: ${{ !cancelled() }}

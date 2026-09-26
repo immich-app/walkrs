@@ -1,4 +1,6 @@
-export { WalkOptions } from '../dist/index.js';
+import type { WalkOptions } from '../dist/index.js';
+
+export type { WalkOptions } from '../dist/index.js';
 
 export type WalkError = {
   path?: string;
