@@ -64,7 +64,7 @@
     "prettier-plugin-rust": "^0.1.9",
     "tinybench": "^6.0.0",
     "tsx": "^4.7.0",
-    "typescript": "^5.9.2",
+    "typescript": "^7.0.0",
     "typescript-eslint": "^8.28.0",
     "unplugin-swc": "^1.4.5",
     "vite-tsconfig-paths": "^6.0.0",
