@@ -3,6 +3,8 @@ use tokio::sync::mpsc::Sender;
 
 const BATCH_SIZE: usize = 4096;
 const BUF_CAPACITY: usize = BATCH_SIZE * 100;
+const SIZE_CAPACITY: usize = BATCH_SIZE * 8;
+const MODIFIED_CAPACITY: usize = BATCH_SIZE * 14;
 const PATHS_PREFIX: &[u8] = br#"{"files":["#;
 
 pub(crate) struct FileMetadata {
@@ -25,17 +27,28 @@ pub(crate) struct BatchSender {
 }
 
 impl BatchSender {
-  pub fn new(tx: Sender<Vec<u8>>, include_metadata: bool) -> Self {
-    let mut paths = Vec::with_capacity(BUF_CAPACITY);
+  fn new_paths(include_metadata: bool) -> Vec<u8> {
+    // The final payload contains both paths and metadata columns.
+    let capacity = BUF_CAPACITY
+      + if include_metadata {
+        SIZE_CAPACITY + MODIFIED_CAPACITY
+      } else {
+        0
+      };
+    let mut paths = Vec::with_capacity(capacity);
     paths.extend_from_slice(PATHS_PREFIX);
+    paths
+  }
+
+  pub fn new(tx: Sender<Vec<u8>>, include_metadata: bool) -> Self {
     Self {
       paths_count: 0,
       errors_count: 0,
-      paths,
+      paths: Self::new_paths(include_metadata),
       errors: Vec::new(),
       metadata: include_metadata.then(|| MetadataBuffers {
-        size: Vec::with_capacity(BATCH_SIZE * 8),
-        modified: Vec::with_capacity(BATCH_SIZE * 14),
+        size: Vec::with_capacity(SIZE_CAPACITY),
+        modified: Vec::with_capacity(MODIFIED_CAPACITY),
       }),
       tx,
     }
@@ -81,6 +94,17 @@ impl BatchSender {
 
   fn flush(&mut self) -> Result<(), ()> {
     if self.paths_count + self.errors_count > 0 {
+      // Larger paths, numbers or errors may exceed our estimates. Reserve the
+      // whole suffix once to avoid repeated growth while merging the buffers.
+      let metadata_len = self
+        .metadata
+        .as_ref()
+        .map_or(br#"],"size":null,"modified":null"#.len(), |metadata| {
+          br#"],"size":["#.len() + metadata.size.len() + br#"],"modified":["#.len() + metadata.modified.len() + 1
+        });
+      self
+        .paths
+        .reserve_exact(metadata_len + br#","errors":["#.len() + self.errors.len() + b"]}".len());
       // Merge file and error buffers
       if let Some(metadata) = &mut self.metadata {
         self.paths.extend_from_slice(br#"],"size":["#);
@@ -96,8 +120,7 @@ impl BatchSender {
       self.paths.extend_from_slice(br#","errors":["#);
       self.paths.extend_from_slice(&self.errors);
       self.paths.extend_from_slice(b"]}");
-      let mut paths = Vec::with_capacity(BUF_CAPACITY);
-      paths.extend_from_slice(PATHS_PREFIX);
+      let paths = Self::new_paths(self.metadata.is_some());
       let buf = std::mem::replace(&mut self.paths, paths);
       self.errors.clear();
       self.paths_count = 0;

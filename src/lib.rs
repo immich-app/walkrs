@@ -144,9 +144,15 @@ fn timestamp_millis(time: SystemTime) -> std::result::Result<i64, &'static str> 
 }
 
 fn read_metadata(entry: &DirEntry) -> std::result::Result<FileMetadata, String> {
-  let metadata = entry
-    .metadata()
-    .map_err(|error| format!("Failed to read metadata: {error}"))?;
+  // The parallel walker follows root symlinks for their file type, but its
+  // entry metadata can still describe the link. Match the root's target type.
+  let metadata = if entry.depth() == 0 {
+    std::fs::metadata(entry.path()).map_err(|error| format!("Failed to read metadata: {error}"))?
+  } else {
+    entry
+      .metadata()
+      .map_err(|error| format!("Failed to read metadata: {error}"))?
+  };
   let size = metadata.len();
   if size > MAX_SAFE_INTEGER {
     return Err("File size exceeds the JavaScript safe integer range".into());

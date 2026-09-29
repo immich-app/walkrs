@@ -181,3 +181,36 @@ fn metadata_disabled_does_not_allocate_column_buffers() {
   let (tx, _rx) = channel(1);
   assert!(BatchSender::new(tx, false).metadata.is_none());
 }
+
+#[test]
+fn metadata_fits_without_growing_the_path_buffer_across_full_batches() {
+  let (tx, mut rx) = channel(2);
+  let mut sender = BatchSender::new(tx, true);
+  let capacity = sender.paths.capacity();
+  let path = format!("/photos/{}.jpg", "x".repeat(84));
+  for _ in 0..2 {
+    for _ in 0..BATCH_SIZE {
+      sender
+        .send_entry(
+          &path,
+          Some(FileMetadata {
+            size: 1_000_000,
+            modified: 1_700_000_000_123,
+          }),
+        )
+        .unwrap();
+    }
+    let bytes = rx.try_recv().unwrap();
+    assert_eq!(
+      bytes.capacity(),
+      capacity,
+      "Merging metadata should not grow the buffer"
+    );
+    assert_eq!(sender.paths.capacity(), capacity);
+    let batch: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(batch["files"], json!(vec![&path; BATCH_SIZE]));
+    assert_eq!(batch["size"], json!(vec![1_000_000; BATCH_SIZE]));
+    assert_eq!(batch["modified"], json!(vec![1_700_000_000_123_i64; BATCH_SIZE]));
+    assert_eq!(batch["errors"], json!([]));
+  }
+}
