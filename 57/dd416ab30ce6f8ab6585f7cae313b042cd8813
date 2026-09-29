@@ -1,0 +1,25 @@
+src/batch_sender.rs
+  s_4268d4e0e9c5a4::t_66dce4a19f656c 6-7,30-38,40-43,47,50-51,97-107,123
+src/batch_sender/tests.rs
+  s_4268d4e0e9c5a4::t_2949736bd65df8 184-216
+src/lib.rs
+  s_4268d4e0e9c5a4::t_60c088ccce26ca 147-155
+src/tests.rs
+  s_4268d4e0e9c5a4::t_f89b4749ec0c75 23-77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "57dd416ab30ce6f8ab6585f7cae313b042cd8813",
+  "prompts": {},
+  "sessions": {
+    "s_4268d4e0e9c5a4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ee1e-b360-7d03-b05a-856e5d3a448c",
+        "model": "unknown"
+      },
+      "human_author": "Jonathan Jogenfors <jonathan@jogenfors.se>"
+    }
+  }
+}
