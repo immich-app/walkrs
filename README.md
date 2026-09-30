@@ -50,9 +50,25 @@ for await (const batch of walk({ paths: ['/photos'], includeMetadata: true })) {
 }
 ```
 
-Every batch has `{ files, size, modified, errors }`. By default, `size` and `modified` are `null`, and the walker does not request file metadata. Set `includeMetadata: true` to get parallel integer arrays: `size[i]` is the byte size of `files[i]`, and `modified[i]` is its modification time in Unix milliseconds, truncated toward zero. Creation time is not collected.
+Every batch has `{ files, size, modified, sidecars, errors }`. By default, `size`, `modified`, and `sidecars` are `null`, and the walker does not request file metadata or probe sidecars. Set `includeMetadata: true` to get parallel integer arrays: `size[i]` is the byte size of `files[i]`, and `modified[i]` is its modification time in Unix milliseconds, truncated toward zero. Creation time is not collected.
 
-The metadata arrays always have the same length and order as `files`. If metadata cannot be read, that file is omitted from all three arrays and an entry with its path is added to `errors`. Values outside JavaScript's safe integer range are also reported as errors. A batch containing only errors has empty metadata arrays when metadata is enabled. An empty walk produces no batches. File order is unspecified, and metadata is a snapshot that can change after the file is visited.
+The enabled arrays always have the same length and order as `files`. If metadata cannot be read, that file is omitted from every column and an entry with its path is added to `errors`. Values outside JavaScript's safe integer range are also reported as errors. A batch containing only errors has empty arrays for enabled columns. An empty walk produces no batches. File order is unspecified, and metadata is a snapshot that can change after the file is visited.
+
+Set `includeSidecars: true` to resolve same-directory XMP sidecars while streaming:
+
+```typescript
+for await (const batch of walk({ paths: ['/photos'], extensions: ['jpg', 'raw'], includeSidecars: true })) {
+  for (let i = 0; i < batch.files.length; i++) {
+    console.log(batch.files[i], batch.sidecars![i]);
+  }
+}
+```
+
+Each `sidecars[i]` is the first readable candidate (`file.jpg.xmp` before `file.xmp`), `null` when discovery completes without a readable candidate, or `{ status: 'unknown' }` when discovery needs a fallback. Explicit file roots and partial directory listings return unknown. Sidecar symlinks are followed, and sidecar names are inspected before media filtering. Orphan XMPs do not produce media records when media extensions are selected; a shared `file.xmp` can match multiple media files with the same stem. The two sidecars are never merged.
+
+The walker reuses its existing directory listing. XMP-free directories require no sidecar filesystem calls. For ASCII names, a fixed 4 KiB Bloom filter per worker skips absent candidates, including unrelated media beside orphan XMPs. Possible matches still undergo readability checks in priority order. False positives, a saturated filter, and non-ASCII names can cause extra checks; they never establish an incorrect absence. Only candidate flags travel with queued files, and no filenames or library-wide match table are retained. Results describe the scan-time snapshot. The optional columns preserve the existing 4,096-record batches and 16-batch channel. The underlying walker still buffers directory entries and queued work, so unusually large directories affect total memory use.
+
+Media symlinks encountered during traversal are skipped by default. Set `followLinks: true` to follow them, with the walker's cycle detection. This option is independent of sidecar symlink handling.
 
 ## Performance
 
@@ -85,6 +101,15 @@ This creates datasets in the platform's cache directory, or the directory specif
 Run benchmarks against any dataset:
 
 The benchmark compares paths-only and metadata-enabled walks at each thread count, along with filtering scenarios.
+
+Sidecar benchmarks cover empty, clustered, spread, orphan-only, and dense XMP distributions, plus synthetic imports with 100%, 1%, and 0% new assets:
+
+```bash
+pnpm run bench:sidecars 10000 1
+BENCH_DIR=/path/to/hdd pnpm run bench:sidecars 100000 4
+```
+
+The benchmark streams counts and uses bounded fixture creation. It excludes database and queue costs. `WALKRS_BASELINE_MODULE` can point to an older checkout's built `lib/index.js` for a comparison with the previous walker.
 
 ```bash
 # Run with default settings on all datasets

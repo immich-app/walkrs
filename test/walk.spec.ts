@@ -291,6 +291,7 @@ describe('walk', () => {
           files: [filename],
           size: [3],
           modified: [Number(stat.mtimeNs / 1_000_000n)],
+          sidecars: null,
           errors: [],
         },
       ]);

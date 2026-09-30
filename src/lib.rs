@@ -1,12 +1,13 @@
 mod batch_sender;
 mod extension_filter;
+mod sidecars;
 
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use globset::{GlobSet, GlobSetBuilder};
-use ignore::{DirEntry, WalkBuilder, WalkState};
+use ignore::{DirEntry, ParallelVisitor, ParallelVisitorBuilder, WalkBuilder, WalkState};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use tokio::sync::Mutex;
@@ -40,6 +41,12 @@ pub struct WalkOptions {
 
   #[napi(ts_type = "boolean | undefined")]
   pub include_metadata: Option<bool>,
+
+  #[napi(ts_type = "boolean | undefined")]
+  pub include_sidecars: Option<bool>,
+
+  #[napi(ts_type = "boolean | undefined")]
+  pub follow_links: Option<bool>,
 }
 
 #[napi(async_iterator)]
@@ -56,6 +63,19 @@ impl AsyncGenerator for Walk {
   fn next(&mut self, _value: Option<Self::Next>) -> impl Future<Output = Result<Option<Self::Yield>>> + Send + 'static {
     let rx = Arc::clone(&self.rx);
     async move { Ok(rx.lock().await.recv().await.map(Into::into)) }
+  }
+
+  fn complete(
+    &mut self,
+    _value: Option<Self::Return>,
+  ) -> impl Future<Output = Result<Option<Self::Yield>>> + Send + 'static {
+    let rx = Arc::clone(&self.rx);
+    async move {
+      let mut rx = rx.lock().await;
+      rx.close();
+      while rx.try_recv().is_ok() {}
+      Ok(None)
+    }
   }
 }
 
@@ -88,19 +108,20 @@ pub fn walk(options: WalkOptions) -> Result<Walk> {
     .threads(threads as usize)
     .git_global(false)
     .git_exclude(false);
+  walk_builder.follow_links(options.follow_links.unwrap_or(false));
 
   let walker = walk_builder.build_parallel();
   let include_metadata = options.include_metadata.unwrap_or(false);
+  let include_sidecars = options.include_sidecars.unwrap_or(false);
 
   std::thread::spawn(move || {
-    walker.run(|| {
-      visit(
-        tx.clone(),
-        Arc::clone(&exclusion_set),
-        Arc::clone(&extension_set),
-        include_metadata,
-      )
-    })
+    walker.visit(&mut VisitorBuilder {
+      tx,
+      exclusion_set,
+      extension_filter: extension_set,
+      include_metadata,
+      include_sidecars,
+    });
   });
 
   Ok(Walk {
@@ -164,15 +185,59 @@ fn read_metadata(entry: &DirEntry) -> std::result::Result<FileMetadata, String> 
   Ok(FileMetadata { size, modified })
 }
 
-fn visit(
+struct VisitorBuilder {
   tx: Sender<Vec<u8>>,
   exclusion_set: Arc<GlobSet>,
   extension_filter: Arc<ExtensionFilter>,
   include_metadata: bool,
-) -> Box<dyn FnMut(std::result::Result<DirEntry, ignore::Error>) -> WalkState + Send> {
-  let mut batch_sender = BatchSender::new(tx, include_metadata);
+  include_sidecars: bool,
+}
 
-  Box::new(move |entry_result| {
+impl<'s> ParallelVisitorBuilder<'s> for VisitorBuilder {
+  fn build(&mut self) -> Box<dyn ParallelVisitor + 's> {
+    Box::new(Visitor {
+      batch_sender: BatchSender::new(self.tx.clone(), self.include_metadata, self.include_sidecars),
+      exclusion_set: Arc::clone(&self.exclusion_set),
+      extension_filter: Arc::clone(&self.extension_filter),
+      include_metadata: self.include_metadata,
+      include_sidecars: self.include_sidecars,
+      sidecar_index: self.include_sidecars.then(|| Box::new(sidecars::DirectoryIndex::new())),
+    })
+  }
+}
+
+struct Visitor {
+  batch_sender: BatchSender,
+  exclusion_set: Arc<GlobSet>,
+  extension_filter: Arc<ExtensionFilter>,
+  include_metadata: bool,
+  include_sidecars: bool,
+  sidecar_index: Option<Box<sidecars::DirectoryIndex>>,
+}
+
+impl ParallelVisitor for Visitor {
+  fn directory_summary(&mut self, entries: &[std::fs::DirEntry], complete: bool) -> u8 {
+    self
+      .sidecar_index
+      .as_mut()
+      .map_or(sidecars::UNKNOWN, |index| index.summarize(entries, complete))
+  }
+
+  fn entry_summary(&mut self, entry: &DirEntry, summary: u8) -> u8 {
+    match &self.sidecar_index {
+      Some(index)
+        if entry.file_type().is_some_and(|ft| ft.is_file()) && self.extension_filter.is_match(entry.path()) =>
+      {
+        index.entry_summary(entry.file_name().as_encoded_bytes(), summary)
+      }
+      _ => summary,
+    }
+  }
+
+  fn visit(&mut self, entry_result: std::result::Result<DirEntry, ignore::Error>) -> WalkState {
+    if self.batch_sender.is_closed() {
+      return WalkState::Quit;
+    }
     let entry = match entry_result {
       Ok(entry) => entry,
       Err(err) => {
@@ -182,7 +247,7 @@ fn visit(
           path: None,
           message: err.to_string(),
         };
-        if batch_sender.send_error(error).is_err() {
+        if self.batch_sender.send_error(error).is_err() {
           return WalkState::Quit;
         }
         return WalkState::Continue;
@@ -195,7 +260,7 @@ fn visit(
 
     let path: &Path = entry.path();
 
-    if exclusion_set.is_match(path) {
+    if self.exclusion_set.is_match(path) {
       return if ft.is_dir() {
         WalkState::Skip
       } else {
@@ -207,7 +272,7 @@ fn visit(
       return WalkState::Continue;
     }
 
-    if !extension_filter.is_match(path) {
+    if !self.extension_filter.is_match(path) {
       return WalkState::Continue;
     }
 
@@ -215,11 +280,12 @@ fn visit(
       return WalkState::Continue;
     };
 
-    let metadata = if include_metadata {
+    let metadata = if self.include_metadata {
       match read_metadata(&entry) {
         Ok(metadata) => Some(metadata),
         Err(message) => {
-          if batch_sender
+          if self
+            .batch_sender
             .send_error(WalkError {
               path: Some(path_str.into()),
               message,
@@ -235,12 +301,15 @@ fn visit(
       None
     };
 
-    if batch_sender.send_entry(path_str, metadata).is_err() {
+    let sidecar = self
+      .include_sidecars
+      .then(|| sidecars::resolve(path_str, entry.parent_summary()));
+    if self.batch_sender.send_entry(path_str, metadata, sidecar).is_err() {
       return WalkState::Quit;
     }
 
     WalkState::Continue
-  })
+  }
 }
 
 #[cfg(test)]

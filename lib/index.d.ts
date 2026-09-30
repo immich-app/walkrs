@@ -7,10 +7,13 @@ export type WalkError = {
   message: string;
 };
 
+export type SidecarResult = string | null | { status: 'unknown' };
+
 export type WalkBatch = {
   files: string[];
   size: number[] | null;
   modified: number[] | null;
+  sidecars: SidecarResult[] | null;
   errors: WalkError[];
 };
 

@@ -48,7 +48,8 @@
     "format": "pnpm run ts:format && pnpm run rust:format",
     "format:fix": "pnpm run ts:format:fix && pnpm run rust:format:fix",
     "bench:setup": "node --import tsx bench/setup.ts",
-    "ts:bench": "node --import tsx bench/bench.ts"
+    "ts:bench": "node --import tsx bench/bench.ts",
+    "bench:sidecars": "node --import tsx bench/sidecars.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.8.0",

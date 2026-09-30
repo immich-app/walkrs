@@ -14,12 +14,14 @@ interface BenchmarkOptions {
   extensions?: string[];
   threads?: number;
   includeMetadata?: boolean;
+  includeSidecars?: boolean;
 }
 
 async function run(datasetPath: string, benchmarkOptions?: BenchmarkOptions): Promise<number> {
   const walkOptions = {
     paths: [datasetPath],
     includeMetadata: benchmarkOptions?.includeMetadata ?? false,
+    includeSidecars: benchmarkOptions?.includeSidecars ?? false,
     ...(benchmarkOptions?.exclusionPatterns && { exclusionPatterns: benchmarkOptions.exclusionPatterns }),
     ...(benchmarkOptions?.extensions && { extensions: benchmarkOptions.extensions }),
     ...(benchmarkOptions?.threads && { threads: benchmarkOptions.threads }),
@@ -103,6 +105,13 @@ async function main(): Promise<void> {
 
       bench.add(`${dataset} (metadata), threads: ${threads}`, () =>
         run(datasetPath, { threads, includeMetadata: true }),
+      );
+
+      bench.add(`${dataset} (sidecars), threads: ${threads}`, () =>
+        run(datasetPath, { threads, includeSidecars: true }),
+      );
+      bench.add(`${dataset} (metadata + sidecars), threads: ${threads}`, () =>
+        run(datasetPath, { threads, includeMetadata: true, includeSidecars: true }),
       );
 
       // Add an exclusion pattern

@@ -11,10 +11,13 @@ crate-type = ["cdylib", "rlib"]
 napi = { version = "3.8.3", features = ["async"] }
 napi-derive = "3.5.2"
 tokio = { version = "1", features = ["sync"] }
-ignore = "0.4"
+ignore = { version = "=0.4.33", path = "vendor/ignore", features = ["directory-summary"] }
 globset = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [build-dependencies]
 napi-build = "2.3.1"

@@ -1,10 +1,12 @@
 use crate::WalkError;
+use crate::sidecars::SidecarResult;
 use tokio::sync::mpsc::Sender;
 
 const BATCH_SIZE: usize = 4096;
 const BUF_CAPACITY: usize = BATCH_SIZE * 100;
 const SIZE_CAPACITY: usize = BATCH_SIZE * 8;
 const MODIFIED_CAPACITY: usize = BATCH_SIZE * 14;
+const SIDECARS_CAPACITY: usize = BATCH_SIZE * 5;
 const PATHS_PREFIX: &[u8] = br#"{"files":["#;
 
 pub(crate) struct FileMetadata {
@@ -23,39 +25,52 @@ pub(crate) struct BatchSender {
   paths: Vec<u8>,
   errors: Vec<u8>,
   metadata: Option<MetadataBuffers>,
+  sidecars: Option<Vec<u8>>,
   tx: Sender<Vec<u8>>,
 }
 
 impl BatchSender {
-  fn new_paths(include_metadata: bool) -> Vec<u8> {
+  fn new_paths(include_metadata: bool, include_sidecars: bool) -> Vec<u8> {
     // The final payload contains both paths and metadata columns.
     let capacity = BUF_CAPACITY
       + if include_metadata {
         SIZE_CAPACITY + MODIFIED_CAPACITY
       } else {
         0
-      };
+      }
+      + if include_sidecars { SIDECARS_CAPACITY } else { 0 };
     let mut paths = Vec::with_capacity(capacity);
     paths.extend_from_slice(PATHS_PREFIX);
     paths
   }
 
-  pub fn new(tx: Sender<Vec<u8>>, include_metadata: bool) -> Self {
+  pub fn new(tx: Sender<Vec<u8>>, include_metadata: bool, include_sidecars: bool) -> Self {
     Self {
       paths_count: 0,
       errors_count: 0,
-      paths: Self::new_paths(include_metadata),
+      paths: Self::new_paths(include_metadata, include_sidecars),
       errors: Vec::new(),
       metadata: include_metadata.then(|| MetadataBuffers {
         size: Vec::with_capacity(SIZE_CAPACITY),
         modified: Vec::with_capacity(MODIFIED_CAPACITY),
       }),
+      sidecars: include_sidecars.then(|| Vec::with_capacity(SIDECARS_CAPACITY)),
       tx,
     }
   }
 
-  pub fn send_entry(&mut self, path: &str, metadata: Option<FileMetadata>) -> Result<(), ()> {
+  pub fn is_closed(&self) -> bool {
+    self.tx.is_closed()
+  }
+
+  pub fn send_entry(
+    &mut self,
+    path: &str,
+    metadata: Option<FileMetadata>,
+    sidecar: Option<SidecarResult>,
+  ) -> Result<(), ()> {
     debug_assert_eq!(self.metadata.is_some(), metadata.is_some());
+    debug_assert_eq!(self.sidecars.is_some(), sidecar.is_some());
     if let (Some(buffers), Some(metadata)) = (&mut self.metadata, metadata) {
       if self.paths_count > 0 {
         buffers.size.push(b',');
@@ -64,6 +79,18 @@ impl BatchSender {
       serde_json::to_writer(&mut buffers.size, &metadata.size).expect("Integer serialization should never fail");
       serde_json::to_writer(&mut buffers.modified, &metadata.modified)
         .expect("Integer serialization should never fail");
+    }
+    if let (Some(buffer), Some(sidecar)) = (&mut self.sidecars, sidecar) {
+      if self.paths_count > 0 {
+        buffer.push(b',');
+      }
+      match sidecar {
+        SidecarResult::Found(path) => {
+          serde_json::to_writer(buffer, &path).expect("Path serialization should never fail");
+        }
+        SidecarResult::Absent => buffer.extend_from_slice(b"null"),
+        SidecarResult::Unknown => buffer.extend_from_slice(br#"{"status":"unknown"}"#),
+      }
     }
     if self.paths_count > 0 {
       self.paths.push(b',');
@@ -102,9 +129,12 @@ impl BatchSender {
         .map_or(br#"],"size":null,"modified":null"#.len(), |metadata| {
           br#"],"size":["#.len() + metadata.size.len() + br#"],"modified":["#.len() + metadata.modified.len() + 1
         });
+      let sidecars_len = self.sidecars.as_ref().map_or(br#","sidecars":null"#.len(), |sidecars| {
+        br#","sidecars":["#.len() + sidecars.len() + 1
+      });
       self
         .paths
-        .reserve_exact(metadata_len + br#","errors":["#.len() + self.errors.len() + b"]}".len());
+        .reserve_exact(metadata_len + sidecars_len + br#","errors":["#.len() + self.errors.len() + b"]}".len());
       // Merge file and error buffers
       if let Some(metadata) = &mut self.metadata {
         self.paths.extend_from_slice(br#"],"size":["#);
@@ -117,10 +147,18 @@ impl BatchSender {
       } else {
         self.paths.extend_from_slice(br#"],"size":null,"modified":null"#);
       }
+      if let Some(sidecars) = &mut self.sidecars {
+        self.paths.extend_from_slice(br#","sidecars":["#);
+        self.paths.extend_from_slice(sidecars);
+        self.paths.push(b']');
+        sidecars.clear();
+      } else {
+        self.paths.extend_from_slice(br#","sidecars":null"#);
+      }
       self.paths.extend_from_slice(br#","errors":["#);
       self.paths.extend_from_slice(&self.errors);
       self.paths.extend_from_slice(b"]}");
-      let paths = Self::new_paths(self.metadata.is_some());
+      let paths = Self::new_paths(self.metadata.is_some(), self.sidecars.is_some());
       let buf = std::mem::replace(&mut self.paths, paths);
       self.errors.clear();
       self.paths_count = 0;

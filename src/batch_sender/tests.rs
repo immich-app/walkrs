@@ -5,7 +5,7 @@ use tokio::sync::mpsc::{channel, error::TryRecvError};
 #[test]
 fn empty_sender_does_not_send_a_batch() {
   let (tx, mut rx) = channel(1);
-  let mut sender = BatchSender::new(tx, false);
+  let mut sender = BatchSender::new(tx, false, false);
   sender.flush().unwrap();
   drop(sender);
   assert_eq!(rx.try_recv(), Err(TryRecvError::Disconnected));
@@ -14,7 +14,7 @@ fn empty_sender_does_not_send_a_batch() {
 #[test]
 fn escapes_interleaved_files_and_errors() {
   let (tx, mut rx) = channel(1);
-  let mut sender = BatchSender::new(tx, false);
+  let mut sender = BatchSender::new(tx, false, false);
   let path = "photos/\"quoted\"\\newline\n\t雪.jpg";
   let message = "failed: \"quoted\"\\newline\n\t\0雪";
   sender
@@ -23,14 +23,14 @@ fn escapes_interleaved_files_and_errors() {
       message: message.into(),
     })
     .unwrap();
-  sender.send_entry(path, None).unwrap();
+  sender.send_entry(path, None, None).unwrap();
   sender
     .send_error(WalkError {
       path: Some(path.into()),
       message: message.into(),
     })
     .unwrap();
-  sender.send_entry("", None).unwrap();
+  sender.send_entry("", None, None).unwrap();
   drop(sender);
 
   let batch: Value = serde_json::from_slice(&rx.try_recv().unwrap()).unwrap();
@@ -39,7 +39,7 @@ fn escapes_interleaved_files_and_errors() {
     json!({
       "files": [path, ""],
       "size": null,
-      "modified": null,
+      "modified": null, "sidecars": null,
       "errors": [{"path": null, "message": message}, {"path": path, "message": message}]
     })
   );
@@ -51,7 +51,7 @@ fn batches_files_errors_and_mixed_items_at_the_combined_limit() {
   for total in [BATCH_SIZE - 1, BATCH_SIZE, BATCH_SIZE + 1, 2 * BATCH_SIZE + 1] {
     for mode in 0..3 {
       let (tx, mut rx) = channel(3);
-      let mut sender = BatchSender::new(tx, false);
+      let mut sender = BatchSender::new(tx, false, false);
       for i in 0..total {
         if mode == 1 || (mode == 2 && i % 2 == 0) {
           sender
@@ -61,7 +61,7 @@ fn batches_files_errors_and_mixed_items_at_the_combined_limit() {
             })
             .unwrap();
         } else {
-          sender.send_entry(&i.to_string(), None).unwrap();
+          sender.send_entry(&i.to_string(), None, None).unwrap();
         }
         assert_eq!(rx.len(), (i + 1) / BATCH_SIZE);
       }
@@ -81,7 +81,7 @@ fn batches_files_errors_and_mixed_items_at_the_combined_limit() {
         let batch: Value = serde_json::from_slice(&rx.try_recv().unwrap()).unwrap();
         assert_eq!(
           batch,
-          json!({"files": files, "size": null, "modified": null, "errors": errors})
+          json!({"files": files, "size": null, "modified": null, "sidecars": null, "errors": errors})
         );
       }
       assert_eq!(rx.try_recv(), Err(TryRecvError::Disconnected));
@@ -93,10 +93,10 @@ fn batches_files_errors_and_mixed_items_at_the_combined_limit() {
 fn closed_receiver_returns_an_error() {
   for last_item_is_error in [false, true] {
     let (tx, rx) = channel(1);
-    let mut sender = BatchSender::new(tx, false);
+    let mut sender = BatchSender::new(tx, false, false);
     drop(rx);
     for _ in 0..BATCH_SIZE - 1 {
-      sender.send_entry("file.jpg", None).unwrap();
+      sender.send_entry("file.jpg", None, None).unwrap();
     }
     let result = if last_item_is_error {
       sender.send_error(WalkError {
@@ -104,7 +104,7 @@ fn closed_receiver_returns_an_error() {
         message: "error".into(),
       })
     } else {
-      sender.send_entry("file.jpg", None)
+      sender.send_entry("file.jpg", None, None)
     };
     assert_eq!(result, Err(()));
     assert_eq!(sender.flush(), Ok(()));
@@ -114,7 +114,7 @@ fn closed_receiver_returns_an_error() {
 #[test]
 fn metadata_columns_stay_aligned_across_errors_and_batch_boundaries() {
   let (tx, mut rx) = channel(3);
-  let mut sender = BatchSender::new(tx, true);
+  let mut sender = BatchSender::new(tx, true, false);
   let total = 2 * BATCH_SIZE + 3;
   for i in 0..total {
     if i % 3 == 0 {
@@ -132,6 +132,7 @@ fn metadata_columns_stay_aligned_across_errors_and_batch_boundaries() {
             size: i as u64,
             modified: -(i as i64),
           }),
+          None,
         )
         .unwrap();
     }
@@ -150,6 +151,7 @@ fn metadata_columns_stay_aligned_across_errors_and_batch_boundaries() {
       json!({
         "files": entries.iter().map(usize::to_string).collect::<Vec<_>>(),
         "size": entries,
+        "sidecars": null,
         "modified": entries.iter().map(|&i| -(i as i64)).collect::<Vec<_>>(),
         "errors": errors,
       })
@@ -161,7 +163,7 @@ fn metadata_columns_stay_aligned_across_errors_and_batch_boundaries() {
 #[test]
 fn errors_only_metadata_batch_has_empty_columns() {
   let (tx, mut rx) = channel(1);
-  let mut sender = BatchSender::new(tx, true);
+  let mut sender = BatchSender::new(tx, true, false);
   sender
     .send_error(WalkError {
       path: Some("missing".into()),
@@ -172,20 +174,94 @@ fn errors_only_metadata_batch_has_empty_columns() {
   let batch: Value = serde_json::from_slice(&rx.try_recv().unwrap()).unwrap();
   assert_eq!(
     batch,
-    json!({ "files": [], "size": [], "modified": [], "errors": [{ "path": "missing", "message": "not found" }] })
+    json!({ "files": [], "size": [], "modified": [], "sidecars": null, "errors": [{ "path": "missing", "message": "not found" }] })
   );
 }
 
 #[test]
 fn metadata_disabled_does_not_allocate_column_buffers() {
   let (tx, _rx) = channel(1);
-  assert!(BatchSender::new(tx, false).metadata.is_none());
+  assert!(BatchSender::new(tx, false, false).metadata.is_none());
+}
+
+#[test]
+fn sidecar_columns_remain_aligned_with_errors_and_batch_boundaries() {
+  let (tx, mut rx) = channel(2);
+  let mut sender = BatchSender::new(tx, true, true);
+  let path = "quoted\"\\雪.jpg.xmp";
+  for i in 0..BATCH_SIZE + 3 {
+    if i == 1 {
+      sender
+        .send_error(WalkError {
+          path: None,
+          message: "error".into(),
+        })
+        .unwrap();
+    } else {
+      sender
+        .send_entry(
+          &i.to_string(),
+          Some(FileMetadata {
+            size: i as u64,
+            modified: i as i64,
+          }),
+          Some(match i % 3 {
+            0 => SidecarResult::Found(path.into()),
+            1 => SidecarResult::Absent,
+            _ => SidecarResult::Unknown,
+          }),
+        )
+        .unwrap();
+    }
+  }
+  drop(sender);
+  for start in [0, BATCH_SIZE] {
+    let batch: Value = serde_json::from_slice(&rx.try_recv().unwrap()).unwrap();
+    let entries: Vec<_> = (start..(start + BATCH_SIZE).min(BATCH_SIZE + 3))
+      .filter(|&i| i != 1)
+      .collect();
+    assert_eq!(
+      batch["files"],
+      json!(entries.iter().map(usize::to_string).collect::<Vec<_>>())
+    );
+    assert_eq!(batch["size"], json!(entries));
+    assert_eq!(batch["modified"], json!(entries));
+    assert_eq!(
+      batch["sidecars"],
+      json!(
+        entries
+          .iter()
+          .map(|i| match i % 3 {
+            0 => json!(path),
+            1 => Value::Null,
+            _ => json!({"status": "unknown"}),
+          })
+          .collect::<Vec<_>>()
+      )
+    );
+  }
+}
+
+#[test]
+fn disabled_sidecars_do_not_allocate_a_buffer_and_error_only_sidecars_are_empty() {
+  let (tx, mut rx) = channel(1);
+  assert!(BatchSender::new(tx.clone(), false, false).sidecars.is_none());
+  let mut sender = BatchSender::new(tx, false, true);
+  sender
+    .send_error(WalkError {
+      path: None,
+      message: "error".into(),
+    })
+    .unwrap();
+  drop(sender);
+  let batch: Value = serde_json::from_slice(&rx.try_recv().unwrap()).unwrap();
+  assert_eq!(batch["sidecars"], json!([]));
 }
 
 #[test]
 fn metadata_fits_without_growing_the_path_buffer_across_full_batches() {
   let (tx, mut rx) = channel(2);
-  let mut sender = BatchSender::new(tx, true);
+  let mut sender = BatchSender::new(tx, true, false);
   let capacity = sender.paths.capacity();
   let path = format!("/photos/{}.jpg", "x".repeat(84));
   for _ in 0..2 {
@@ -197,6 +273,7 @@ fn metadata_fits_without_growing_the_path_buffer_across_full_batches() {
             size: 1_000_000,
             modified: 1_700_000_000_123,
           }),
+          None,
         )
         .unwrap();
     }
