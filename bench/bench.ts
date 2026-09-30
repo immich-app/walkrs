@@ -13,11 +13,13 @@ interface BenchmarkOptions {
   exclusionPatterns?: string[];
   extensions?: string[];
   threads?: number;
+  includeMetadata?: boolean;
 }
 
 async function run(datasetPath: string, benchmarkOptions?: BenchmarkOptions): Promise<number> {
   const walkOptions = {
     paths: [datasetPath],
+    includeMetadata: benchmarkOptions?.includeMetadata ?? false,
     ...(benchmarkOptions?.exclusionPatterns && { exclusionPatterns: benchmarkOptions.exclusionPatterns }),
     ...(benchmarkOptions?.extensions && { extensions: benchmarkOptions.extensions }),
     ...(benchmarkOptions?.threads && { threads: benchmarkOptions.threads }),
@@ -29,6 +31,14 @@ async function run(datasetPath: string, benchmarkOptions?: BenchmarkOptions): Pr
       throw new Error(`Walk encountered errors: ${batch.errors.map((e) => e.message).join(', ')}`);
     }
     fileCount += batch.files.length;
+    if (
+      walkOptions.includeMetadata &&
+      (batch.size?.length !== batch.files.length ||
+        batch.modified?.length !== batch.files.length ||
+        batch.created?.length !== batch.files.length)
+    ) {
+      throw new Error('Metadata columns are not aligned with paths');
+    }
   }
 
   return fileCount;
@@ -46,7 +56,9 @@ async function main(): Promise<void> {
     specifiedDatasets.push(arg);
   }
 
-  const datasets = specifiedDatasets.length > 0 ? specifiedDatasets : DATASETS.map((d) => d.name);
+  const defaultDatasets = DATASETS.filter((d) => d.default).map((d) => d.name);
+
+  const datasets = specifiedDatasets.length > 0 ? specifiedDatasets : defaultDatasets;
 
   console.log(`Benchmarking file walk on datasets: ${datasets.join(', ')}`);
 
@@ -91,6 +103,10 @@ async function main(): Promise<void> {
       // Baseline - no options
       bench.add(`${dataset}, threads: ${threads}`, () => run(datasetPath, { threads }));
 
+      bench.add(`${dataset} (metadata), threads: ${threads}`, () =>
+        run(datasetPath, { threads, includeMetadata: true }),
+      );
+
       // Add an exclusion pattern
       bench.add(`${dataset} (exclusions), threads: ${threads}`, () =>
         run(datasetPath, { exclusionPatterns: EXCLUSION_PATTERNS, threads }),
@@ -104,6 +120,15 @@ async function main(): Promise<void> {
       // Add both exclusions and extensions
       bench.add(`${dataset} (exclusions + extensions), threads: ${threads}`, () =>
         run(datasetPath, {
+          exclusionPatterns: EXCLUSION_PATTERNS,
+          extensions: EXTENSIONS,
+          threads,
+        }),
+      );
+
+      bench.add(`${dataset} (metadata + exclusions + extensions), threads: ${threads}`, () =>
+        run(datasetPath, {
+          includeMetadata: true,
           exclusionPatterns: EXCLUSION_PATTERNS,
           extensions: EXTENSIONS,
           threads,
