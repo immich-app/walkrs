@@ -23,7 +23,7 @@ fn modification_times_outside_the_safe_integer_range_are_errors() {
 
 #[cfg(unix)]
 #[test]
-fn explicit_file_symlinks_use_target_size_and_modification_time() {
+fn explicit_file_symlinks_use_target_metadata() {
   use std::fs::{self, File, FileTimes};
   use std::os::unix::fs::symlink;
   use std::path::PathBuf;
@@ -63,7 +63,10 @@ fn explicit_file_symlinks_use_target_size_and_modification_time() {
       assert_eq!(entry.depth(), 0);
       assert!(entry.file_type().unwrap().is_file());
       let metadata = read_metadata(&entry).unwrap();
-      results.lock().unwrap().push((metadata.size, metadata.modified));
+      results
+        .lock()
+        .unwrap()
+        .push((metadata.size, metadata.modified, metadata.created));
       WalkState::Continue
     })
   });
@@ -71,7 +74,13 @@ fn explicit_file_symlinks_use_target_size_and_modification_time() {
     results.into_inner().unwrap(),
     vec![(
       target_metadata.len(),
-      timestamp_millis(target_metadata.modified().unwrap()).unwrap()
+      timestamp_millis(target_metadata.modified().unwrap()).unwrap(),
+      target_metadata
+        .created()
+        .ok()
+        .map(timestamp_millis)
+        .transpose()
+        .unwrap()
     )]
   );
 }

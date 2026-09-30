@@ -33,7 +33,9 @@ async function run(datasetPath: string, benchmarkOptions?: BenchmarkOptions): Pr
     fileCount += batch.files.length;
     if (
       walkOptions.includeMetadata &&
-      (batch.size?.length !== batch.files.length || batch.modified?.length !== batch.files.length)
+      (batch.size?.length !== batch.files.length ||
+        batch.modified?.length !== batch.files.length ||
+        batch.created?.length !== batch.files.length)
     ) {
       throw new Error('Metadata columns are not aligned with paths');
     }

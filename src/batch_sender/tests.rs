@@ -40,6 +40,7 @@ fn escapes_interleaved_files_and_errors() {
       "files": [path, ""],
       "size": null,
       "modified": null,
+      "created": null,
       "errors": [{"path": null, "message": message}, {"path": path, "message": message}]
     })
   );
@@ -81,7 +82,7 @@ fn batches_files_errors_and_mixed_items_at_the_combined_limit() {
         let batch: Value = serde_json::from_slice(&rx.try_recv().unwrap()).unwrap();
         assert_eq!(
           batch,
-          json!({"files": files, "size": null, "modified": null, "errors": errors})
+          json!({"files": files, "size": null, "modified": null, "created": null, "errors": errors})
         );
       }
       assert_eq!(rx.try_recv(), Err(TryRecvError::Disconnected));
@@ -131,6 +132,7 @@ fn metadata_columns_stay_aligned_across_errors_and_batch_boundaries() {
           Some(FileMetadata {
             size: i as u64,
             modified: -(i as i64),
+            created: (i % 2 == 0).then_some(i as i64),
           }),
         )
         .unwrap();
@@ -151,6 +153,7 @@ fn metadata_columns_stay_aligned_across_errors_and_batch_boundaries() {
         "files": entries.iter().map(usize::to_string).collect::<Vec<_>>(),
         "size": entries,
         "modified": entries.iter().map(|&i| -(i as i64)).collect::<Vec<_>>(),
+        "created": entries.iter().map(|&i| (i % 2 == 0).then_some(i as i64)).collect::<Vec<_>>(),
         "errors": errors,
       })
     );
@@ -172,7 +175,7 @@ fn errors_only_metadata_batch_has_empty_columns() {
   let batch: Value = serde_json::from_slice(&rx.try_recv().unwrap()).unwrap();
   assert_eq!(
     batch,
-    json!({ "files": [], "size": [], "modified": [], "errors": [{ "path": "missing", "message": "not found" }] })
+    json!({ "files": [], "size": [], "modified": [], "created": [], "errors": [{ "path": "missing", "message": "not found" }] })
   );
 }
 
@@ -196,6 +199,7 @@ fn metadata_fits_without_growing_the_path_buffer_across_full_batches() {
           Some(FileMetadata {
             size: 1_000_000,
             modified: 1_700_000_000_123,
+            created: Some(1_600_000_000_456),
           }),
         )
         .unwrap();
@@ -211,6 +215,7 @@ fn metadata_fits_without_growing_the_path_buffer_across_full_batches() {
     assert_eq!(batch["files"], json!(vec![&path; BATCH_SIZE]));
     assert_eq!(batch["size"], json!(vec![1_000_000; BATCH_SIZE]));
     assert_eq!(batch["modified"], json!(vec![1_700_000_000_123_i64; BATCH_SIZE]));
+    assert_eq!(batch["created"], json!(vec![1_600_000_000_456_i64; BATCH_SIZE]));
     assert_eq!(batch["errors"], json!([]));
   }
 }

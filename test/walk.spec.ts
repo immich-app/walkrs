@@ -223,6 +223,7 @@ describe('walk', () => {
         for await (const batch of walk(adjustedOptions)) {
           expect(batch.size).toBeNull();
           expect(batch.modified).toBeNull();
+          expect(batch.created).toBeNull();
           actual.push(...batch.files);
         }
         const expected = Object.entries(files)
@@ -247,7 +248,7 @@ describe('walk', () => {
     });
 
     it.each([1, 2, 0])('aligns size and millisecond timestamps with paths using %i threads', async (threads) => {
-      const expected = new Map<string, { size: number; modified: number }>();
+      const expected = new Map<string, { size: number; modified: number; created: number | null }>();
       for (const [name, content, time] of [
         ['empty.jpg', '', new Date(1_700_000_000_123)],
         ['quoted"雪.jpg', 'hello world', new Date(1_700_000_000_789)],
@@ -258,7 +259,11 @@ describe('walk', () => {
         await fs.utimes(filename, time, time);
         const stat = await fs.stat(filename, { bigint: true });
         if (name.endsWith('.jpg')) {
-          expected.set(filename, { size: Number(stat.size), modified: Number(stat.mtimeNs / 1_000_000n) });
+          expected.set(filename, {
+            size: Number(stat.size),
+            modified: Number(stat.mtimeNs / 1_000_000n),
+            created: stat.birthtimeNs === 0n ? null : Number(stat.birthtimeNs / 1_000_000n),
+          });
         }
       }
 
@@ -267,10 +272,16 @@ describe('walk', () => {
         expect(batch.errors).toEqual([]);
         expect(batch.size).toHaveLength(batch.files.length);
         expect(batch.modified).toHaveLength(batch.files.length);
+        expect(batch.created).toHaveLength(batch.files.length);
         for (const [index, filename] of batch.files.entries()) {
-          expect({ size: batch.size![index], modified: batch.modified![index] }).toEqual(expected.get(filename));
+          expect({
+            size: batch.size![index],
+            modified: batch.modified![index],
+            created: batch.created![index],
+          }).toEqual(expected.get(filename));
           expect(Number.isSafeInteger(batch.size![index])).toBe(true);
           expect(Number.isSafeInteger(batch.modified![index])).toBe(true);
+          expect(batch.created![index] === null || Number.isSafeInteger(batch.created![index])).toBe(true);
           seen.add(filename);
         }
       }
@@ -291,6 +302,7 @@ describe('walk', () => {
           files: [filename],
           size: [3],
           modified: [Number(stat.mtimeNs / 1_000_000n)],
+          created: [stat.birthtimeNs === 0n ? null : Number(stat.birthtimeNs / 1_000_000n)],
           errors: [],
         },
       ]);
@@ -305,6 +317,7 @@ describe('walk', () => {
         expect(batch.errors).toEqual([]);
         expect(batch.size).toEqual(Array.from({ length: batch.files.length }, () => 0));
         expect(batch.modified).toHaveLength(batch.files.length);
+        expect(batch.created).toHaveLength(batch.files.length);
         expect(batch.modified!.every((value) => Number.isSafeInteger(value))).toBe(true);
         lengths.push(batch.files.length);
         for (const filename of batch.files) {
@@ -329,6 +342,7 @@ describe('walk', () => {
         listed.push(...batch.files);
         expect(batch.size).toBeNull();
         expect(batch.modified).toBeNull();
+        expect(batch.created).toBeNull();
       }
       expect(listed).toContain(inaccessible);
 
@@ -337,6 +351,7 @@ describe('walk', () => {
       for await (const batch of walk({ paths: [tempDir], includeMetadata: true })) {
         expect(batch.size).toHaveLength(batch.files.length);
         expect(batch.modified).toHaveLength(batch.files.length);
+        expect(batch.created).toHaveLength(batch.files.length);
         found.push(...batch.files);
         errors.push(...batch.errors);
       }
@@ -350,7 +365,7 @@ describe('walk', () => {
         batches.push(batch);
       }
       expect(batches).toHaveLength(1);
-      expect(batches[0]).toMatchObject({ files: [], size: [], modified: [] });
+      expect(batches[0]).toMatchObject({ files: [], size: [], modified: [], created: [] });
       expect(batches[0].errors).toHaveLength(1);
     });
 

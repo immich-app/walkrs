@@ -36,12 +36,12 @@ for await (const batch of walk({
   photos.push(...batch.files);
 }
 
-// Include file sizes and modification times
+// Include file sizes, modification times, and birth times
 for await (const batch of walk({ paths: ['/photos'], includeMetadata: true })) {
-  if (batch.size !== null && batch.modified !== null) {
+  if (batch.size !== null && batch.modified !== null && batch.created !== null) {
     for (let i = 0; i < batch.files.length; i++) {
-      // Path, size in bytes, and modification time in Unix milliseconds
-      console.log(batch.files[i], batch.size[i], batch.modified[i]);
+      // Path, size in bytes, and modification and birth times in Unix milliseconds
+      console.log(batch.files[i], batch.size[i], batch.modified[i], batch.created[i]);
     }
   }
   for (const error of batch.errors) {
@@ -50,9 +50,9 @@ for await (const batch of walk({ paths: ['/photos'], includeMetadata: true })) {
 }
 ```
 
-Every batch has `{ files, size, modified, errors }`. By default, `size` and `modified` are `null`, and the walker does not request file metadata. Set `includeMetadata: true` to get parallel integer arrays: `size[i]` is the byte size of `files[i]`, and `modified[i]` is its modification time in Unix milliseconds, truncated toward zero. Creation time is not collected.
+Every batch has `{ files, size, modified, created, errors }`. By default, `size`, `modified`, and `created` are `null`, and the walker does not request file metadata. Set `includeMetadata: true` to get parallel arrays: `size[i]` is the byte size of `files[i]`, `modified[i]` is its modification time, and `created[i]` is its filesystem birth time. Timestamps are Unix milliseconds, truncated toward zero. Birth time is read from the same metadata snapshot as size and modification time, without another filesystem call. A `null` birth time means the filesystem or platform does not expose it; it is not the Unix change time (`ctime`).
 
-The metadata arrays always have the same length and order as `files`. If metadata cannot be read, that file is omitted from all three arrays and an entry with its path is added to `errors`. Values outside JavaScript's safe integer range are also reported as errors. A batch containing only errors has empty metadata arrays when metadata is enabled. An empty walk produces no batches. File order is unspecified, and metadata is a snapshot that can change after the file is visited.
+The metadata arrays always have the same length and order as `files`. If metadata cannot be read, that file is omitted from all four arrays and an entry with its path is added to `errors`. Values outside JavaScript's safe integer range are also reported as errors. A batch containing only errors has empty metadata arrays when metadata is enabled. An empty walk produces no batches. File order is unspecified, and metadata is a snapshot that can change after the file is visited.
 
 ## Performance
 

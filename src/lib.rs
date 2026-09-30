@@ -161,7 +161,19 @@ fn read_metadata(entry: &DirEntry) -> std::result::Result<FileMetadata, String> 
     .modified()
     .map_err(|error| format!("Failed to read modification time: {error}"))?;
   let modified = timestamp_millis(modified).map_err(str::to_owned)?;
-  Ok(FileMetadata { size, modified })
+  // Read birth time from the same metadata snapshot, without another filesystem call.
+  // Some filesystems do not expose it; retain the file with a null birth time.
+  let created = metadata
+    .created()
+    .ok()
+    .map(timestamp_millis)
+    .transpose()
+    .map_err(|_| "Birth time exceeds the JavaScript safe integer range".to_owned())?;
+  Ok(FileMetadata {
+    size,
+    modified,
+    created,
+  })
 }
 
 fn visit(

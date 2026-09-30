@@ -11,6 +11,7 @@ export type WalkBatch = {
   files: string[];
   size: number[] | null;
   modified: number[] | null;
+  created: (number | null)[] | null;
   errors: WalkError[];
 };
 
