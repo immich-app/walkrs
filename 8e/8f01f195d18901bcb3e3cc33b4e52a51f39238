@@ -1,0 +1,31 @@
+.github/workflows/benchmark.yml
+  s_6a012639e3c198::t_6efd9d8bee27de 27
+.github/workflows/test.yml
+  s_6a012639e3c198::t_be17a65c9e0794 27
+bench/bench.ts
+  s_4268d4e0e9c5a4::t_70ecbed62290f2 126-134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "8e8f01f195d18901bcb3e3cc33b4e52a51f39238",
+  "prompts": {},
+  "sessions": {
+    "s_4268d4e0e9c5a4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ee1e-b360-7d03-b05a-856e5d3a448c",
+        "model": "unknown"
+      },
+      "human_author": "Jonathan Jogenfors <jonathan@jogenfors.se>"
+    },
+    "s_6a012639e3c198": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ef41-d08b-7422-8edb-83afb6efadf0",
+        "model": "unknown"
+      },
+      "human_author": "Jonathan Jogenfors <jonathan@jogenfors.se>"
+    }
+  }
+}
