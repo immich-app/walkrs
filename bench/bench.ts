@@ -123,6 +123,15 @@ async function main(): Promise<void> {
           threads,
         }),
       );
+
+      bench.add(`${dataset} (metadata + exclusions + extensions), threads: ${threads}`, () =>
+        run(datasetPath, {
+          includeMetadata: true,
+          exclusionPatterns: EXCLUSION_PATTERNS,
+          extensions: EXTENSIONS,
+          threads,
+        }),
+      );
     }
   }
 
