@@ -3,6 +3,7 @@
     "target": "ES2024",
     "module": "NodeNext",
     "lib": ["ES2024"],
+    "types": ["node"],
     "declaration": true,
     "declarationDir": "./dist",
     "outDir": "./dist",
