@@ -227,7 +227,7 @@ describe('walk', () => {
           .filter((entry) => entry[1])
           .map(([file]) => path.join(tempDir, file.replace(/^\//, '')));
 
-        expect([...actual].toSorted()).toEqual([...expected].toSorted());
+        expect(actual.toSorted((a, b) => a.localeCompare(b))).toEqual(expected.toSorted((a, b) => a.localeCompare(b)));
       });
     });
   }
