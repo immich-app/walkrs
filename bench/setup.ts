@@ -10,7 +10,8 @@ async function createDataset(config: DatasetConfig): Promise<void> {
 
   await fs.mkdir(datasetPath, { recursive: true });
 
-  const filesPerDir = Math.min(1000, Math.max(10, Math.floor(Math.sqrt(config.fileCount))));
+  const estimatedFilesPerDir = Math.floor(Math.sqrt(config.fileCount));
+  const filesPerDir = Math.min(1000, Math.max(10, estimatedFilesPerDir));
   const dirsNeeded = Math.ceil(config.fileCount / filesPerDir);
 
   const dirPromises = [];
@@ -88,4 +89,8 @@ async function main(): Promise<void> {
   console.log(`\nDatasets created in: ${BENCH_DIR}`);
 }
 
-main().catch(console.error);
+try {
+  await main();
+} catch (error) {
+  console.error(error);
+}
