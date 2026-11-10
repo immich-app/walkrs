@@ -34,7 +34,7 @@ export default typescriptEslint.config([
       '@typescript-eslint/explicit-module-boundary-types': 'off',
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-floating-promises': 'error',
-      'unicorn/prevent-abbreviations': 'off',
+      'unicorn/name-replacements': 'off',
       'unicorn/filename-case': 'off',
       'unicorn/no-null': 'off',
       'unicorn/prefer-top-level-await': 'off',

@@ -117,4 +117,8 @@ async function main(): Promise<void> {
   console.table(bench.table());
 }
 
-main().catch(console.error);
+try {
+  await main();
+} catch (error) {
+  console.error(error);
+}
