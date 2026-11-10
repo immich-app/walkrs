@@ -71,7 +71,7 @@
     "vitest": "^4.0.0"
   },
   "volta": {
-    "node": "24.21.0"
+    "node": "26.13.0"
   },
   "repository": {
     "type": "git",
