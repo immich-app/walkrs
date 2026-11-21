@@ -54,8 +54,8 @@ importers:
         specifier: ^8.28.0
         version: 8.55.0(eslint@9.39.2)(typescript@5.9.3)
       unplugin-swc:
-        specifier: ^1.4.5
-        version: 1.5.9(@swc/core@1.15.11)(rollup@4.68.7)
+        specifier: ^2.0.0
+        version: 2.0.0(@swc/core@1.15.11)(esbuild@0.27.7)(rollup@4.68.7)(vite@7.3.1(@types/node@26.6.6)(tsx@4.21.0))
       vite-tsconfig-paths:
         specifier: ^6.0.0
         version: 6.1.1(typescript@5.9.3)(vite@7.3.1(@types/node@26.6.6)(tsx@4.21.0))
@@ -827,8 +827,11 @@ packages:
     resolution: {integrity: sha512-QNqXyfVS2wm9hweSYD2O7F0G06uurj9kZ96TRQE5Y9hU7+tgdZwIkbAKc5Ocy1HxEY2kuDQa6cQ1WRs/O5LFKA==}
     engines: {node: ^12.20.0 || ^14.18.0 || >=16.0.0}
 
-  '@rollup/pluginutils@5.3.0':
-    resolution: {integrity: sha512-5EdhGZtnu3V88ces7s53hhfK5KSASnJZv8Lulpc04cWO3REESroJXg73DFsOmgbU2BhwV0E20bu2IDZb3VKW4Q==}
+  '@rolldown/pluginutils@1.1.1':
+    resolution: {integrity: sha512-glFIJDvLNDtJhT9qrMFWLPbvS+skxgt4L0K8Ei2YtnhPysAJnsI7nyxSJxKj4ADeKX0OLjC4ntRkwpLOoS3rwA==}
+
+  '@rollup/pluginutils@5.5.1':
+    resolution: {integrity: sha512-P9ZvnfouRu4MSC+ilERaw6FmZs8zqKhpHxEs4aGDGWQAMzQGXnhvCSvoNwokfNvdt7t3Y5Y4p6gStQgezeIqug==}
     engines: {node: '>=14.0.0'}
     peerDependencies:
       rollup: ^1.20.0||^2.0.0||^3.0.0||^4.0.0
@@ -1793,14 +1796,47 @@ packages:
   universal-user-agent@7.0.3:
     resolution: {integrity: sha512-TmnEAEAsBJVZM/AADELsK76llnwcf9vMKuPz8JflO1frO8Lchitr0fNaN9d+Ap0BjKtqWqd/J17qeDnXh8CL2A==}
 
-  unplugin-swc@1.5.9:
-    resolution: {integrity: sha512-RKwK3yf0M+MN17xZfF14bdKqfx0zMXYdtOdxLiE6jHAoidupKq3jGdJYANyIM1X/VmABhh1WpdO+/f4+Ol89+g==}
+  unplugin-swc@2.0.0:
+    resolution: {integrity: sha512-hMdGJEtkwiJhzuXXx4Nb1XYDeD9KG4+P7KZOaErJTpZNYhTo1sbWIsXb+u410zXyaqH00veNX4UxOr6TpUwNiQ==}
+    engines: {node: ^20.19.0 || >=22.12.0}
     peerDependencies:
       '@swc/core': ^1.2.108
 
-  unplugin@2.3.11:
-    resolution: {integrity: sha512-5uKD0nqiYVzlmCRs01Fhs2BdkEgBS3SAVP6ndrBsuK42iC2+JHyxM05Rm9G8+5mkmRtzMZGY8Ct5+mliZxU/Ww==}
-    engines: {node: '>=18.12.0'}
+  unplugin@3.7.0:
+    resolution: {integrity: sha512-GrM2uq3DQo3hvLU2FjeYhooJ8BY9N6j1Fbzgx7Pta3VVJevsD3VP4dPjZkZOS0mLvN8w9zzr9OlP+31bSMyuLw==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    peerDependencies:
+      '@farmfe/core': '*'
+      '@rsbuild/core': '*'
+      '@rspack/core': '*'
+      bun-types-no-globals: '*'
+      esbuild: '*'
+      rolldown: '*'
+      rollup: '*'
+      unloader: '*'
+      vite: '*'
+      webpack: '*'
+    peerDependenciesMeta:
+      '@farmfe/core':
+        optional: true
+      '@rsbuild/core':
+        optional: true
+      '@rspack/core':
+        optional: true
+      bun-types-no-globals:
+        optional: true
+      esbuild:
+        optional: true
+      rolldown:
+        optional: true
+      rollup:
+        optional: true
+      unloader:
+        optional: true
+      vite:
+        optional: true
+      webpack:
+        optional: true
 
   update-browserslist-db@1.2.3:
     resolution: {integrity: sha512-Js0m9cx+qOgDxo0eMiFGEueWztz+d4+M3rGlmKPT+T4IS/jP4ylw3Nwpu6cpTTP8R1MAC1kF4VbdLt3ARf209w==}
@@ -2520,7 +2556,9 @@ snapshots:
 
   '@pkgr/core@0.2.9': {}
 
-  '@rollup/pluginutils@5.3.0(rollup@4.68.7)':
+  '@rolldown/pluginutils@1.1.1': {}
+
+  '@rollup/pluginutils@5.5.1(rollup@4.68.7)':
     dependencies:
       '@types/estree': 1.0.10
       estree-walker: 2.0.2
@@ -3401,21 +3439,34 @@ snapshots:
 
   universal-user-agent@7.0.3: {}
 
-  unplugin-swc@1.5.9(@swc/core@1.15.11)(rollup@4.68.7):
+  unplugin-swc@2.0.0(@swc/core@1.15.11)(esbuild@0.27.7)(rollup@4.68.7)(vite@7.3.1(@types/node@26.6.6)(tsx@4.21.0)):
     dependencies:
-      '@rollup/pluginutils': 5.3.0(rollup@4.68.7)
+      '@rollup/pluginutils': 5.5.1(rollup@4.68.7)
       '@swc/core': 1.15.11
       load-tsconfig: 0.2.5
-      unplugin: 2.3.11
+      unplugin: 3.7.0(esbuild@0.27.7)(rollup@4.68.7)(vite@7.3.1(@types/node@26.6.6)(tsx@4.21.0))
     transitivePeerDependencies:
+      - '@farmfe/core'
+      - '@rsbuild/core'
+      - '@rspack/core'
+      - bun-types-no-globals
+      - esbuild
+      - rolldown
       - rollup
+      - unloader
+      - vite
+      - webpack
 
-  unplugin@2.3.11:
+  unplugin@3.7.0(esbuild@0.27.7)(rollup@4.68.7)(vite@7.3.1(@types/node@26.6.6)(tsx@4.21.0)):
     dependencies:
       '@jridgewell/remapping': 2.3.5
-      acorn: 8.15.0
+      '@rolldown/pluginutils': 1.1.1
       picomatch: 4.0.7
       webpack-virtual-modules: 0.6.2
+    optionalDependencies:
+      esbuild: 0.27.7
+      rollup: 4.68.7
+      vite: 7.3.1(@types/node@26.6.6)(tsx@4.21.0)
 
   update-browserslist-db@1.2.3(browserslist@4.28.1):
     dependencies:
