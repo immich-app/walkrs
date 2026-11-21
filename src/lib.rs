@@ -66,7 +66,13 @@ pub fn walk(options: WalkOptions) -> Result<Walk> {
     });
   }
 
-  let exclusion_set = Arc::new(build_exclusion_set(&options.exclusion_patterns.unwrap_or_default())?);
+  let exclusion_patterns = options.exclusion_patterns.unwrap_or_default();
+  let exclusion_set = Arc::new(build_exclusion_set(&exclusion_patterns)?);
+  let directory_patterns: Vec<String> = exclusion_patterns
+    .iter()
+    .filter_map(|pattern| pattern.strip_suffix("/**").map(String::from))
+    .collect();
+  let directory_exclusion_set = Arc::new(build_exclusion_set(&directory_patterns)?);
   let extension_set = Arc::new(ExtensionFilter::new(&options.extensions.unwrap_or_default()));
 
   let mut walk_builder = WalkBuilder::new(&options.paths[0]);
@@ -87,7 +93,16 @@ pub fn walk(options: WalkOptions) -> Result<Walk> {
 
   let walker = walk_builder.build_parallel();
 
-  std::thread::spawn(move || walker.run(|| visit(tx.clone(), Arc::clone(&exclusion_set), Arc::clone(&extension_set))));
+  std::thread::spawn(move || {
+    walker.run(|| {
+      visit(
+        tx.clone(),
+        Arc::clone(&exclusion_set),
+        Arc::clone(&directory_exclusion_set),
+        Arc::clone(&extension_set),
+      )
+    })
+  });
 
   Ok(Walk {
     rx: Arc::new(Mutex::new(rx)),
@@ -117,6 +132,7 @@ fn build_exclusion_set(exclusion_patterns: &[String]) -> Result<GlobSet> {
 fn visit(
   tx: Sender<Vec<u8>>,
   exclusion_set: Arc<GlobSet>,
+  directory_exclusion_set: Arc<GlobSet>,
   extension_filter: Arc<ExtensionFilter>,
 ) -> Box<dyn FnMut(std::result::Result<DirEntry, ignore::Error>) -> WalkState + Send> {
   let mut batch_sender = BatchSender::new(tx);
@@ -143,6 +159,10 @@ fn visit(
     };
 
     let path: &Path = entry.path();
+
+    if ft.is_dir() && entry.depth() > 0 && directory_exclusion_set.is_match(path) {
+      return WalkState::Skip;
+    }
 
     if exclusion_set.is_match(path) {
       return if ft.is_dir() {
