@@ -93,6 +93,29 @@ const tests: TestCase[] = [
     },
   },
   {
+    test: 'should exclude files inside an excluded folder',
+    options: {
+      paths: ['/photos/'],
+      exclusionPatterns: ['**/@eaDir/**'],
+    },
+    files: {
+      '/photos/image.jpg': true,
+      '/photos/@eaDir/image.jpg': false,
+      '/photos/album/@eaDir/thumbs/image.jpg': false,
+    },
+  },
+  {
+    test: 'should walk folders whose name only contains an excluded folder name',
+    options: {
+      paths: ['/photos/'],
+      exclusionPatterns: ['**/@eaDir/**'],
+    },
+    files: {
+      '/photos/not@eaDirx/image.jpg': true,
+      '/photos/@eaDirx/image.jpg': true,
+    },
+  },
+  {
     test: 'should crawl multiple paths',
     options: {
       paths: ['/photos/', '/images/', '/albums/'],
@@ -241,10 +264,12 @@ describe('walk', () => {
 
     afterEach(async () => {
       // Restore permissions before cleanup
-      try {
-        await fs.chmod(path.join(tempDir, 'restricted'), 0o755);
-      } catch {
-        // Ignore if directory doesn't exist
+      for (const restricted of ['restricted', '@eaDir']) {
+        try {
+          await fs.chmod(path.join(tempDir, restricted), 0o755);
+        } catch {
+          // Ignore if directory doesn't exist
+        }
       }
       await fs.rm(tempDir, { recursive: true, force: true });
     });
@@ -278,6 +303,22 @@ describe('walk', () => {
       // Should have reported at least one error for the restricted directory
       expect(errors.length).toBeGreaterThan(0);
       expect(errors.some((error) => error.message.toLowerCase().includes('permission denied'))).toBe(true);
+    });
+
+    it.skipIf(process.getuid?.() === 0)('does not enter excluded folders', async () => {
+      await fs.mkdir(path.join(tempDir, '@eaDir'));
+      await fs.writeFile(path.join(tempDir, 'image.jpg'), '');
+      await fs.chmod(path.join(tempDir, '@eaDir'), 0o000);
+
+      const files: string[] = [];
+      const errors: Array<{ path?: string; message: string }> = [];
+      for await (const batch of walk({ paths: [tempDir], exclusionPatterns: ['**/@eaDir/**'] })) {
+        files.push(...batch.files);
+        errors.push(...batch.errors);
+      }
+
+      expect(files).toEqual([path.join(tempDir, 'image.jpg')]);
+      expect(errors).toEqual([]);
     });
 
     it('can still enumerate files with restricted permissions', async () => {
