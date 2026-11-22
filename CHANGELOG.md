@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.16](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.15...walkrs-v0.0.16) (2026-11-22)
+
+
+### Miscellaneous
+
+* **npm:** update eslint monorepo to v10 ([#66](https://github.com/immich-app/walkrs/issues/66)) ([17b1142](https://github.com/immich-app/walkrs/commit/17b1142facde1343e38a0935b6acee44d450c3c0))
+
 ## [0.0.15](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.14...walkrs-v0.0.15) (2026-11-22)
 
 
