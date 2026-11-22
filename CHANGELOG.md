@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.15](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.14...walkrs-v0.0.15) (2026-11-22)
+
+
+### Miscellaneous
+
+* **npm:** update typescript-projects ([#53](https://github.com/immich-app/walkrs/issues/53)) ([a9cde0e](https://github.com/immich-app/walkrs/commit/a9cde0ef2782b38f720b383f2acd334fe81dd394))
+
 ## [0.0.14](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.13...walkrs-v0.0.14) (2026-11-21)
 
 
