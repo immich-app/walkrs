@@ -116,6 +116,53 @@ const tests: TestCase[] = [
     },
   },
   {
+    test: 'should not match a slash with a star',
+    options: {
+      paths: ['/photos/'],
+      exclusionPatterns: ['**/abc/*.tif', '*.jpg'],
+    },
+    files: {
+      '/photos/abc/scan.tif': false,
+      '/photos/abc/sub/scan.tif': true,
+      '/photos/image.jpg': true,
+    },
+  },
+  {
+    test: 'should exclude by brace range',
+    options: {
+      paths: ['/photos/'],
+      exclusionPatterns: ['**/{1..3}/**', '**/{9..10}/**'],
+    },
+    files: {
+      '/photos/2/image.jpg': false,
+      '/photos/4/image.jpg': true,
+      '/photos/10/image.jpg': false,
+      '/photos/11/image.jpg': true,
+    },
+  },
+  {
+    test: 'should exclude non-ASCII folders without case sensitivity',
+    options: {
+      paths: ['/photos/'],
+      exclusionPatterns: ['**/ΚΎΠΡΟΣ/**', '**/İstanbul/**'],
+    },
+    files: {
+      '/photos/Κύπρος/image.jpg': false,
+      '/photos/istanbul/image.jpg': true,
+    },
+  },
+  {
+    test: 'should exclude a file named like an excluded folder',
+    options: {
+      paths: ['/photos/'],
+      exclusionPatterns: ['**/Raw/**'],
+    },
+    files: {
+      '/photos/Raw': false,
+      '/photos/Raw.jpg': true,
+    },
+  },
+  {
     test: 'should crawl multiple paths',
     options: {
       paths: ['/photos/', '/images/', '/albums/'],

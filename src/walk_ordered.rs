@@ -6,7 +6,6 @@ use std::io;
 use std::iter::Peekable;
 use std::num::NonZero;
 use std::panic::{self, AssertUnwindSafe};
-use std::path::Path;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -18,7 +17,7 @@ use tokio::sync::mpsc;
 
 use crate::WalkError;
 use crate::batch_sender::BatchSender;
-use crate::entry_filter::EntryFilter;
+use crate::selection::{Node, Selection};
 
 const CHANNEL_CAPACITY: usize = 16;
 const READ_AHEAD_PER_THREAD: usize = 4;
@@ -84,16 +83,15 @@ impl AsyncGenerator for WalkOrdered {
 
 #[napi]
 pub fn walk_ordered(options: WalkOrderedOptions) -> Result<WalkOrdered> {
-  let paths = absolute_paths(&options.paths)?;
-  let filter = EntryFilter::new(
-    &options.exclusion_patterns.unwrap_or_default(),
-    &options.extensions.unwrap_or_default(),
+  let selection = Selection::new(
+    &options.paths,
+    options.include_hidden,
+    options.exclusion_patterns,
+    options.extensions,
   )?;
   let threads = thread_count(options.threads);
   let reader = Arc::new(DirectoryReader {
-    filter,
-    include_hidden: options.include_hidden.unwrap_or(false),
-    paths,
+    selection,
     window: threads * READ_AHEAD_PER_THREAD,
     state: Mutex::default(),
     changed: Condvar::new(),
@@ -109,19 +107,6 @@ pub fn walk_ordered(options: WalkOrderedOptions) -> Result<WalkOrdered> {
     rx: Arc::new(tokio::sync::Mutex::new(rx)),
     reader,
   })
-}
-
-fn absolute_paths(paths: &[String]) -> Result<BTreeSet<String>> {
-  paths
-    .iter()
-    .map(|path| match path.starts_with('/') {
-      true => Ok(normalize(path)),
-      false => Err(Error::new(
-        Status::InvalidArg,
-        format!("Path must be absolute: '{path}'"),
-      )),
-    })
-    .collect()
 }
 
 fn thread_count(requested: Option<f64>) -> usize {
@@ -389,9 +374,7 @@ impl ReadState {
 }
 
 struct DirectoryReader {
-  filter: EntryFilter,
-  include_hidden: bool,
-  paths: BTreeSet<String>,
+  selection: Selection,
   window: usize,
   state: Mutex<ReadState>,
   changed: Condvar,
@@ -400,7 +383,7 @@ struct DirectoryReader {
 impl DirectoryReader {
   fn roots(&self, sender: &mut BatchSender) -> std::result::Result<Vec<Entry>, ()> {
     let mut roots = Vec::new();
-    for path in &self.paths {
+    for path in &self.selection.paths {
       match self.read_root(path) {
         Ok(Some(root)) => roots.push(root),
         Ok(None) => {}
@@ -415,14 +398,14 @@ impl DirectoryReader {
     let metadata = fs::metadata(path).map_err(|err| walk_error(path, err))?;
 
     if metadata.is_file() {
-      if !self.filter.includes_file(Path::new(path)) {
+      if !self.selection.includes_root(path, Node::File) {
         return Ok(None);
       }
       let modified = metadata.modified().map_err(|err| walk_error(path, err))?;
       return Ok(Some(Entry::file(path, epoch_millis(modified))));
     }
 
-    Ok((metadata.is_dir() && !self.filter.skips_root(Path::new(path))).then(|| Entry::directory(path)))
+    Ok((metadata.is_dir() && self.selection.includes_root(path, Node::Directory)).then(|| Entry::directory(path)))
   }
 
   fn run(&self) {
@@ -529,7 +512,7 @@ impl DirectoryReader {
   }
 
   fn open(&self, directory: &str) -> io::Result<Option<fs::ReadDir>> {
-    if self.paths.contains(directory) {
+    if self.selection.paths.contains(directory) {
       return fs::read_dir(directory).map(Some);
     }
     read_dir_without_following(directory)
@@ -537,7 +520,7 @@ impl DirectoryReader {
 
   fn read_entry(&self, path: &mut String, dir_entry: &fs::DirEntry) -> std::result::Result<Option<Entry>, WalkError> {
     let file_name = dir_entry.file_name();
-    if !self.include_hidden && file_name.as_encoded_bytes().starts_with(b".") {
+    if !self.selection.includes_name(file_name.as_encoded_bytes()) {
       return Ok(None);
     }
 
@@ -545,11 +528,12 @@ impl DirectoryReader {
     path.push_str(&name);
     let file_type = dir_entry.file_type().map_err(|err| walk_error(path, err))?;
 
-    if file_type.is_dir() {
-      if self.filter.skips_directory(Path::new(path)) {
-        return Ok(None);
-      }
-    } else if !file_type.is_file() || !self.filter.includes_file(Path::new(path)) {
+    let node = match (file_type.is_dir(), file_type.is_file()) {
+      (true, _) => Node::Directory,
+      (_, true) => Node::File,
+      _ => return Ok(None),
+    };
+    if !self.selection.includes_child(path, node) {
       return Ok(None);
     }
 
@@ -608,20 +592,6 @@ fn push_child(path: &mut String, directory: &str, name: &str) {
     path.push('/');
   }
   path.push_str(name);
-}
-
-fn normalize(path: &str) -> String {
-  let mut components: Vec<&str> = Vec::new();
-  for component in path.split('/') {
-    match component {
-      "" | "." => {}
-      ".." => {
-        components.pop();
-      }
-      component => components.push(component),
-    }
-  }
-  format!("/{}", components.join("/"))
 }
 
 fn walk_error(path: &str, err: io::Error) -> WalkError {

@@ -1,6 +1,6 @@
 use super::*;
 use std::cell::Cell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc as std_mpsc;
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -84,9 +84,7 @@ fn drain(walk: WalkOrdered) -> std::result::Result<usize, String> {
 
 fn reader(paths: &[String]) -> DirectoryReader {
   DirectoryReader {
-    filter: EntryFilter::new(&[], &[]).unwrap(),
-    include_hidden: false,
-    paths: paths.iter().cloned().collect(),
+    selection: Selection::new(paths, None, None, None).unwrap(),
     window: 1,
     state: Mutex::default(),
     changed: Condvar::new(),
@@ -185,23 +183,6 @@ fn rounds_modified_times_like_node() {
   assert_eq!(epoch_millis(before(1_000_000_500)), -1000);
   assert_eq!(epoch_millis(before(1_000_600_000)), -1001);
   assert_eq!(epoch_millis(before(500_000)), 0);
-}
-
-#[test]
-fn normalizes_paths_lexically() {
-  let cases = [
-    ("/lib", "/lib"),
-    ("/lib/", "/lib"),
-    ("/lib//", "/lib"),
-    ("//lib/./sub/../", "/lib"),
-    ("/lib/.", "/lib"),
-    ("/..", "/"),
-    ("/", "/"),
-  ];
-
-  for (path, expected) in cases {
-    assert_eq!(normalize(path), expected, "{path}");
-  }
 }
 
 #[test]

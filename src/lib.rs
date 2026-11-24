@@ -1,6 +1,9 @@
 mod batch_sender;
 mod entry_filter;
 mod extension_filter;
+mod matcher;
+mod pattern;
+mod selection;
 mod walk_ordered;
 
 use std::path::Path;
@@ -14,6 +17,7 @@ use tokio::sync::mpsc::{self, Sender};
 
 use batch_sender::BatchSender;
 use entry_filter::EntryFilter;
+pub use matcher::{Matcher, MatcherOptions};
 pub use walk_ordered::{WalkOrdered, WalkOrderedOptions, walk_ordered};
 
 #[derive(Debug, Clone, serde::Serialize)]

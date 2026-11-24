@@ -1,6 +1,7 @@
 import type { WalkOptions, WalkOrderedOptions } from '../dist/index.js';
 
-export type { WalkOptions, WalkOrderedOptions } from '../dist/index.js';
+export { Matcher } from '../dist/index.js';
+export type { MatcherOptions, WalkOptions, WalkOrderedOptions } from '../dist/index.js';
 
 export type WalkError = {
   path: string | null;
