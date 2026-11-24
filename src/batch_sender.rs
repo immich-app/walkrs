@@ -10,6 +10,7 @@ pub(crate) struct BatchSender {
   errors_count: usize,
   files: Vec<u8>,
   errors: Vec<u8>,
+  modified: Option<Vec<u8>>,
   tx: Sender<Vec<u8>>,
 }
 
@@ -22,8 +23,25 @@ impl BatchSender {
       errors_count: 0,
       files,
       errors: Vec::new(),
+      modified: None,
       tx,
     }
+  }
+
+  pub fn with_modified(tx: Sender<Vec<u8>>) -> Self {
+    let mut sender = Self::new(tx);
+    sender.modified = Some(Vec::with_capacity(BUF_CAPACITY));
+    sender
+  }
+
+  pub fn send_file(&mut self, path: &str, modified: i64) -> Result<(), ()> {
+    if let Some(buf) = &mut self.modified {
+      if self.files_count > 0 {
+        buf.push(b',');
+      }
+      serde_json::to_writer(&mut *buf, &modified).expect("Modified time serialization should never fail");
+    }
+    self.send_entry(path)
   }
 
   pub fn send_entry(&mut self, path: &str) -> Result<(), ()> {
@@ -31,7 +49,6 @@ impl BatchSender {
       self.files.push(b',');
     }
 
-    // Serialize immediately
     serde_json::to_writer(&mut self.files, path).expect("Path serialization should never fail");
     self.files_count += 1;
     if self.files_count + self.errors_count >= BATCH_SIZE {
@@ -45,7 +62,6 @@ impl BatchSender {
       self.errors.push(b',');
     }
 
-    // Serialize immediately
     serde_json::to_writer(&mut self.errors, &error).expect("WalkError serialization should never fail");
     self.errors_count += 1;
     if self.files_count + self.errors_count >= BATCH_SIZE {
@@ -56,8 +72,14 @@ impl BatchSender {
 
   fn flush(&mut self) -> Result<(), ()> {
     if self.files_count + self.errors_count > 0 {
-      // Merge file and error buffers
-      self.files.extend_from_slice(br#"],"errors":["#);
+      self.files.push(b']');
+      if let Some(modified) = &mut self.modified {
+        self.files.extend_from_slice(br#","modified":["#);
+        self.files.extend_from_slice(modified);
+        self.files.push(b']');
+        modified.clear();
+      }
+      self.files.extend_from_slice(br#","errors":["#);
       self.files.extend_from_slice(&self.errors);
       self.files.extend_from_slice(b"]}");
       let mut files = Vec::with_capacity(BUF_CAPACITY);

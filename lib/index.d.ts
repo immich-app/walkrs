@@ -1,6 +1,6 @@
-import type { WalkOptions } from '../dist/index.js';
+import type { WalkOptions, WalkOrderedOptions } from '../dist/index.js';
 
-export type { WalkOptions } from '../dist/index.js';
+export type { WalkOptions, WalkOrderedOptions } from '../dist/index.js';
 
 export type WalkError = {
   path?: string;
@@ -12,4 +12,12 @@ export type WalkBatch = {
   errors: WalkError[];
 };
 
+export type WalkOrderedBatch = {
+  files: string[];
+  modified: number[];
+  errors: WalkError[];
+};
+
 export function walk(options: WalkOptions): AsyncGenerator<WalkBatch, void, unknown>;
+
+export function walkOrdered(options: WalkOrderedOptions): AsyncGenerator<WalkOrderedBatch, void, unknown>;
