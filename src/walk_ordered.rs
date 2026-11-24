@@ -1,11 +1,13 @@
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io;
 use std::iter::Peekable;
 use std::num::NonZero;
+use std::panic::{self, AssertUnwindSafe};
 use std::path::Path;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::vec;
@@ -20,7 +22,11 @@ use crate::entry_filter::EntryFilter;
 
 const CHANNEL_CAPACITY: usize = 16;
 const READ_AHEAD_PER_THREAD: usize = 4;
-const NANOS_PER_MILLI: i128 = 1_000_000;
+const READ_AHEAD_ENTRIES: usize = 65_536;
+const MAX_THREADS: usize = 64;
+const MILLIS_PER_SECOND: f64 = 1e3;
+const NANOS_PER_MILLI: f64 = 1e6;
+const NANOS_PER_SECOND: u32 = 1_000_000_000;
 
 #[napi(object)]
 pub struct WalkOrderedOptions {
@@ -37,12 +43,13 @@ pub struct WalkOrderedOptions {
   pub extensions: Option<Vec<String>>,
 
   #[napi(ts_type = "number | undefined")]
-  pub threads: Option<u32>,
+  pub threads: Option<f64>,
 }
 
 #[napi(async_iterator)]
 pub struct WalkOrdered {
   rx: Arc<tokio::sync::Mutex<mpsc::Receiver<Vec<u8>>>>,
+  reader: Arc<DirectoryReader>,
 }
 
 #[napi]
@@ -53,7 +60,13 @@ impl AsyncGenerator for WalkOrdered {
 
   fn next(&mut self, _value: Option<Self::Next>) -> impl Future<Output = Result<Option<Self::Yield>>> + Send + 'static {
     let rx = Arc::clone(&self.rx);
-    async move { Ok(rx.lock().await.recv().await.map(Into::into)) }
+    let reader = Arc::clone(&self.reader);
+    async move {
+      match rx.lock().await.recv().await {
+        Some(batch) => Ok(Some(batch.into())),
+        None => reader.end().map(|()| None),
+      }
+    }
   }
 
   fn complete(
@@ -61,6 +74,7 @@ impl AsyncGenerator for WalkOrdered {
     _value: Option<Self::Return>,
   ) -> impl Future<Output = Result<Option<Self::Yield>>> + Send + 'static {
     let rx = Arc::clone(&self.rx);
+    self.reader.close();
     async move {
       rx.lock().await.close();
       Ok(None)
@@ -70,53 +84,117 @@ impl AsyncGenerator for WalkOrdered {
 
 #[napi]
 pub fn walk_ordered(options: WalkOrderedOptions) -> Result<WalkOrdered> {
+  let paths = absolute_paths(&options.paths)?;
   let filter = EntryFilter::new(
     &options.exclusion_patterns.unwrap_or_default(),
     &options.extensions.unwrap_or_default(),
   )?;
-  let threads = match options.threads {
-    Some(threads) if threads > 0 => threads as usize,
-    _ => thread::available_parallelism().map_or(1, NonZero::get),
-  };
+  let threads = thread_count(options.threads);
   let reader = Arc::new(DirectoryReader {
     filter,
     include_hidden: options.include_hidden.unwrap_or(false),
+    paths,
     window: threads * READ_AHEAD_PER_THREAD,
     state: Mutex::default(),
     changed: Condvar::new(),
   });
   let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
 
-  for _ in 0..threads {
-    let reader = Arc::clone(&reader);
-    thread::spawn(move || reader.run());
-  }
-  thread::spawn(move || {
-    let _ = emit(&reader, &options.paths, &mut BatchSender::with_modified(tx));
+  if let Err(err) = start(&reader, threads, tx) {
     reader.close();
-  });
+    return Err(err);
+  }
 
   Ok(WalkOrdered {
     rx: Arc::new(tokio::sync::Mutex::new(rx)),
+    reader,
   })
 }
 
-fn emit(reader: &DirectoryReader, paths: &[String], sender: &mut BatchSender) -> std::result::Result<(), ()> {
+fn absolute_paths(paths: &[String]) -> Result<BTreeSet<String>> {
+  paths
+    .iter()
+    .map(|path| match path.starts_with('/') {
+      true => Ok(normalize(path)),
+      false => Err(Error::new(
+        Status::InvalidArg,
+        format!("Path must be absolute: '{path}'"),
+      )),
+    })
+    .collect()
+}
+
+fn thread_count(requested: Option<f64>) -> usize {
+  match requested {
+    Some(threads) if threads >= 1.0 => threads.min(MAX_THREADS as f64) as usize,
+    _ => thread::available_parallelism().map_or(1, NonZero::get).min(MAX_THREADS),
+  }
+}
+
+fn start(reader: &Arc<DirectoryReader>, threads: usize, tx: mpsc::Sender<Vec<u8>>) -> Result<()> {
+  for _ in 0..threads {
+    spawn(reader, DirectoryReader::run)?;
+  }
+  spawn(reader, move |reader| {
+    let mut sender = BatchSender::with_modified(tx);
+    let _ = emit(reader, &mut sender);
+    reader.finish();
+  })
+}
+
+fn spawn(reader: &Arc<DirectoryReader>, body: impl FnOnce(&DirectoryReader) + Send + 'static) -> Result<()> {
+  let spawn_error = |err| Error::new(Status::GenericFailure, format!("Failed to spawn walker thread: {err}"));
+
+  #[cfg(test)]
+  tests::inject_spawn_failure().map_err(spawn_error)?;
+
+  let reader = Arc::clone(reader);
+  thread::Builder::new()
+    .spawn(move || {
+      if let Err(panic) = panic::catch_unwind(AssertUnwindSafe(|| body(&reader))) {
+        reader.fail(panic_message(&*panic));
+      }
+    })
+    .map(drop)
+    .map_err(spawn_error)
+}
+
+fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
+  let reason = panic
+    .downcast_ref::<&str>()
+    .copied()
+    .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+    .unwrap_or("unknown panic");
+  format!("Walker thread panicked: {reason}")
+}
+
+fn emit(reader: &DirectoryReader, sender: &mut BatchSender) -> std::result::Result<(), ()> {
   let mut walk = OrderedWalk {
     reader,
-    roots: reader.roots(paths, sender)?.into_iter().peekable(),
+    roots: reader.roots(sender)?.into_iter().peekable(),
     stack: Vec::new(),
+    path: String::new(),
   };
 
-  while let Some(entry) = walk.next() {
-    match entry.kind {
-      EntryKind::File { modified } => sender.send_file(&entry.path, modified)?,
+  while let Some(kind) = walk.next() {
+    match kind {
+      EntryKind::File { modified } => {
+        #[cfg(test)]
+        tests::inject_panic(&walk.path);
+
+        sender.send_file(&walk.path, modified)?;
+      }
       EntryKind::Directory => {
-        let listing = reader.take(entry.path);
+        let Some(listing) = reader.take(&walk.path) else {
+          return Ok(());
+        };
         for error in listing.errors {
           sender.send_error(error)?;
         }
-        walk.stack.push(listing.entries.into_iter());
+        walk.stack.push(Level {
+          directory: walk.path.clone(),
+          entries: listing.entries.into_iter(),
+        });
       }
     }
   }
@@ -126,32 +204,60 @@ fn emit(reader: &DirectoryReader, paths: &[String], sender: &mut BatchSender) ->
 struct OrderedWalk<'a> {
   reader: &'a DirectoryReader,
   roots: Peekable<vec::IntoIter<Entry>>,
-  stack: Vec<vec::IntoIter<Entry>>,
+  stack: Vec<Level>,
+  path: String,
+}
+
+struct Level {
+  directory: String,
+  entries: vec::IntoIter<Entry>,
 }
 
 impl OrderedWalk<'_> {
-  fn next(&mut self) -> Option<Entry> {
-    while self.stack.last().is_some_and(|entries| entries.len() == 0) {
+  fn next(&mut self) -> Option<EntryKind> {
+    while self.stack.last().is_some_and(|level| level.entries.len() == 0) {
       self.stack.pop();
     }
 
-    let listed = self.stack.last().and_then(|entries| entries.as_slice().first());
-    match self.roots.peek().map(|root| listed.map(|listed| root.cmp(listed))) {
+    let listed = self.stack.last().and_then(Level::peek_key);
+    match self
+      .roots
+      .peek()
+      .map(|root| listed.map(|listed| root.sort_key().cmp(listed)))
+    {
       Some(None | Some(Ordering::Less)) => self.next_root(),
       Some(Some(Ordering::Equal)) => {
         self.roots.next();
-        self.stack.last_mut()?.next()
+        self.next_listed()
       }
-      None | Some(Some(Ordering::Greater)) => self.stack.last_mut()?.next(),
+      None | Some(Some(Ordering::Greater)) => self.next_listed(),
     }
   }
 
-  fn next_root(&mut self) -> Option<Entry> {
+  fn next_root(&mut self) -> Option<EntryKind> {
     let root = self.roots.next()?;
     if let EntryKind::Directory = root.kind {
-      self.reader.schedule(Entry::directory(root.path.clone()));
+      self.reader.schedule(Entry::directory(root.name.clone()));
     }
-    Some(root)
+    self.path.clear();
+    self.path.push_str(&root.name);
+    Some(root.kind)
+  }
+
+  fn next_listed(&mut self) -> Option<EntryKind> {
+    let level = self.stack.last_mut()?;
+    let entry = level.entries.next()?;
+    self.path.clear();
+    push_child(&mut self.path, &level.directory, &entry.name);
+    Some(entry.kind)
+  }
+}
+
+impl Level {
+  fn peek_key(&self) -> Option<impl Iterator<Item = u8> + '_> {
+    let entry = self.entries.as_slice().first()?;
+    let separator = (!self.directory.ends_with('/')).then_some(b'/');
+    Some(self.directory.bytes().chain(separator).chain(entry.sort_key()))
   }
 }
 
@@ -163,34 +269,41 @@ pub(crate) enum EntryKind {
 
 #[derive(Debug)]
 pub(crate) struct Entry {
-  pub path: String,
+  pub name: Box<str>,
   pub kind: EntryKind,
 }
 
 impl Entry {
-  pub fn file(path: String, modified: i64) -> Self {
+  pub fn file(name: impl Into<Box<str>>, modified: i64) -> Self {
     Self {
-      path,
+      name: name.into(),
       kind: EntryKind::File { modified },
     }
   }
 
-  pub fn directory(path: String) -> Self {
+  pub fn directory(name: impl Into<Box<str>>) -> Self {
     Self {
-      path,
+      name: name.into(),
       kind: EntryKind::Directory,
     }
   }
 
   fn sort_key(&self) -> impl Iterator<Item = u8> + '_ {
-    let separator = (matches!(self.kind, EntryKind::Directory) && !self.path.ends_with('/')).then_some(b'/');
-    self.path.bytes().chain(separator)
+    self.sort_key_from(0)
+  }
+
+  fn sort_key_from(&self, start: usize) -> impl Iterator<Item = u8> + '_ {
+    let separator = (matches!(self.kind, EntryKind::Directory) && !self.name.ends_with('/')).then_some(b'/');
+    self.name.as_bytes()[start..].iter().copied().chain(separator)
   }
 }
 
 impl Ord for Entry {
   fn cmp(&self, other: &Self) -> Ordering {
-    self.sort_key().cmp(other.sort_key())
+    let common = self.name.len().min(other.name.len());
+    self.name.as_bytes()[..common]
+      .cmp(&other.name.as_bytes()[..common])
+      .then_with(|| self.sort_key_from(common).cmp(other.sort_key_from(common)))
   }
 }
 
@@ -214,43 +327,80 @@ struct Listing {
   errors: Vec<WalkError>,
 }
 
+impl Listing {
+  fn sort(&mut self) {
+    self.entries.sort_unstable();
+    self.entries.dedup();
+  }
+}
+
 #[derive(Default)]
 struct ReadState {
   pending: BTreeSet<Entry>,
   in_flight: usize,
   ready: HashMap<String, Listing>,
+  buffered: usize,
   wanted: Option<String>,
   closed: bool,
+  finished: bool,
+  failure: Option<String>,
 }
 
 impl ReadState {
   fn claim(&mut self, window: usize) -> Option<String> {
+    let directory = self.next_pending(window)?;
+    self.in_flight += 1;
+    Some(directory)
+  }
+
+  fn next_pending(&mut self, window: usize) -> Option<String> {
     if let Some(wanted) = &self.wanted
-      && let Some(entry) = self.pending.take(&Entry::directory(wanted.clone()))
+      && let Some(entry) = self.pending.take(&Entry::directory(wanted.as_str()))
     {
-      return Some(entry.path);
+      return Some(entry.name.into());
     }
 
-    if self.in_flight + self.ready.len() >= window {
+    if self.in_flight + self.ready.len() >= window || self.buffered >= READ_AHEAD_ENTRIES {
       return None;
     }
 
-    self.pending.pop_first().map(|entry| entry.path)
+    self.pending.pop_first().map(|entry| entry.name.into())
+  }
+
+  fn finish(&mut self, directory: String, listing: Listing) {
+    self.in_flight -= 1;
+    let mut path = String::new();
+    for entry in &listing.entries {
+      if let EntryKind::Directory = entry.kind {
+        path.clear();
+        push_child(&mut path, &directory, &entry.name);
+        self.pending.insert(Entry::directory(path.as_str()));
+      }
+    }
+    self.buffered += listing.entries.len();
+    self.ready.insert(directory, listing);
+  }
+
+  fn take(&mut self, directory: &str) -> Option<Listing> {
+    let listing = self.ready.remove(directory)?;
+    self.buffered -= listing.entries.len();
+    Some(listing)
   }
 }
 
 struct DirectoryReader {
   filter: EntryFilter,
   include_hidden: bool,
+  paths: BTreeSet<String>,
   window: usize,
   state: Mutex<ReadState>,
   changed: Condvar,
 }
 
 impl DirectoryReader {
-  fn roots(&self, paths: &[String], sender: &mut BatchSender) -> std::result::Result<Vec<Entry>, ()> {
+  fn roots(&self, sender: &mut BatchSender) -> std::result::Result<Vec<Entry>, ()> {
     let mut roots = Vec::new();
-    for path in paths.iter().map(|path| normalize(path)).collect::<BTreeSet<_>>() {
+    for path in &self.paths {
       match self.read_root(path) {
         Ok(Some(root)) => roots.push(root),
         Ok(None) => {}
@@ -261,24 +411,25 @@ impl DirectoryReader {
     Ok(roots)
   }
 
-  fn read_root(&self, path: String) -> std::result::Result<Option<Entry>, WalkError> {
-    let metadata = fs::metadata(&path).map_err(|err| walk_error(&path, err))?;
+  fn read_root(&self, path: &str) -> std::result::Result<Option<Entry>, WalkError> {
+    let metadata = fs::metadata(path).map_err(|err| walk_error(path, err))?;
 
     if metadata.is_file() {
-      if !self.filter.includes_file(Path::new(&path)) {
+      if !self.filter.includes_file(Path::new(path)) {
         return Ok(None);
       }
-      let modified = metadata.modified().map_err(|err| walk_error(&path, err))?;
+      let modified = metadata.modified().map_err(|err| walk_error(path, err))?;
       return Ok(Some(Entry::file(path, epoch_millis(modified))));
     }
 
-    Ok((metadata.is_dir() && !self.filter.skips_root(Path::new(&path))).then(|| Entry::directory(path)))
+    Ok((metadata.is_dir() && !self.filter.skips_root(Path::new(path))).then(|| Entry::directory(path)))
   }
 
   fn run(&self) {
     while let Some(directory) = self.claim() {
       let listing = self.read(&directory);
-      self.finish(directory, listing);
+      self.lock().finish(directory, listing);
+      self.changed.notify_all();
     }
   }
 
@@ -287,23 +438,49 @@ impl DirectoryReader {
     self.changed.notify_all();
   }
 
-  fn take(&self, directory: String) -> Listing {
+  fn take(&self, directory: &str) -> Option<Listing> {
     let mut state = self.lock();
-    state.wanted = Some(directory.clone());
+    state.wanted = Some(directory.to_string());
     self.changed.notify_all();
     loop {
-      if let Some(listing) = state.ready.remove(&directory) {
+      if state.closed {
+        return None;
+      }
+      if let Some(listing) = state.take(directory) {
         state.wanted = None;
         self.changed.notify_all();
-        return listing;
+        return Some(listing);
       }
-      state = self.changed.wait(state).unwrap();
+      state = self.wait(state);
     }
+  }
+
+  fn finish(&self) {
+    let mut state = self.lock();
+    state.finished = true;
+    state.closed = true;
+    self.changed.notify_all();
   }
 
   fn close(&self) {
     self.lock().closed = true;
     self.changed.notify_all();
+  }
+
+  fn fail(&self, message: String) {
+    let mut state = self.lock();
+    state.failure.get_or_insert(message);
+    state.closed = true;
+    self.changed.notify_all();
+  }
+
+  fn end(&self) -> Result<()> {
+    let state = self.lock();
+    match (&state.failure, state.finished) {
+      (Some(failure), _) => Err(Error::from_reason(failure.clone())),
+      (None, false) => Err(Error::from_reason("Walk ended unexpectedly")),
+      (None, true) => Ok(()),
+    }
   }
 
   fn claim(&self) -> Option<String> {
@@ -313,39 +490,33 @@ impl DirectoryReader {
         return None;
       }
       if let Some(directory) = state.claim(self.window) {
-        state.in_flight += 1;
         return Some(directory);
       }
-      state = self.changed.wait(state).unwrap();
+      state = self.wait(state);
     }
-  }
-
-  fn finish(&self, directory: String, listing: Listing) {
-    let mut state = self.lock();
-    state.in_flight -= 1;
-    for entry in &listing.entries {
-      if let EntryKind::Directory = entry.kind {
-        state.pending.insert(Entry::directory(entry.path.clone()));
-      }
-    }
-    state.ready.insert(directory, listing);
-    self.changed.notify_all();
   }
 
   fn read(&self, directory: &str) -> Listing {
+    #[cfg(test)]
+    tests::inject_panic(directory);
+
     let mut listing = Listing::default();
-    let dir_entries = match fs::read_dir(directory) {
-      Ok(dir_entries) => dir_entries,
+    let dir_entries = match self.open(directory) {
+      Ok(Some(dir_entries)) => dir_entries,
+      Ok(None) => return listing,
       Err(err) => {
         listing.errors.push(walk_error(directory, err));
         return listing;
       }
     };
 
+    let mut path = String::new();
     for dir_entry in dir_entries {
+      path.clear();
+      push_child(&mut path, directory, "");
       let result = dir_entry
         .map_err(|err| walk_error(directory, err))
-        .and_then(|dir_entry| self.read_entry(directory, &dir_entry));
+        .and_then(|dir_entry| self.read_entry(&mut path, &dir_entry));
       match result {
         Ok(Some(entry)) => listing.entries.push(entry),
         Ok(None) => {}
@@ -353,70 +524,104 @@ impl DirectoryReader {
       }
     }
 
-    listing.entries.sort_unstable();
+    listing.sort();
     listing
   }
 
-  fn read_entry(&self, directory: &str, dir_entry: &fs::DirEntry) -> std::result::Result<Option<Entry>, WalkError> {
-    let Ok(name) = dir_entry.file_name().into_string() else {
-      return Ok(None);
-    };
+  fn open(&self, directory: &str) -> io::Result<Option<fs::ReadDir>> {
+    if self.paths.contains(directory) {
+      return fs::read_dir(directory).map(Some);
+    }
+    read_dir_without_following(directory)
+  }
 
-    if !self.include_hidden && name.starts_with('.') {
+  fn read_entry(&self, path: &mut String, dir_entry: &fs::DirEntry) -> std::result::Result<Option<Entry>, WalkError> {
+    let file_name = dir_entry.file_name();
+    if !self.include_hidden && file_name.as_encoded_bytes().starts_with(b".") {
       return Ok(None);
     }
 
-    let path = join(directory, &name);
-    let file_type = dir_entry.file_type().map_err(|err| walk_error(&path, err))?;
+    let name = file_name.to_string_lossy();
+    path.push_str(&name);
+    let file_type = dir_entry.file_type().map_err(|err| walk_error(path, err))?;
 
     if file_type.is_dir() {
-      return Ok((!self.filter.skips_directory(Path::new(&path))).then(|| Entry::directory(path)));
+      if self.filter.skips_directory(Path::new(path)) {
+        return Ok(None);
+      }
+    } else if !file_type.is_file() || !self.filter.includes_file(Path::new(path)) {
+      return Ok(None);
     }
 
-    if !file_type.is_file() || !self.filter.includes_file(Path::new(&path)) {
-      return Ok(None);
+    let Cow::Borrowed(name) = name else {
+      return Err(WalkError {
+        path: Some(path.clone()),
+        message: "Path is not valid UTF-8".to_string(),
+      });
+    };
+
+    if file_type.is_dir() {
+      return Ok(Some(Entry::directory(name)));
     }
 
     let modified = dir_entry
       .metadata()
       .and_then(|metadata| metadata.modified())
-      .map_err(|err| walk_error(&path, err))?;
-    Ok(Some(Entry::file(path, epoch_millis(modified))))
+      .map_err(|err| walk_error(path, err))?;
+    Ok(Some(Entry::file(name, epoch_millis(modified))))
   }
 
   fn lock(&self) -> MutexGuard<'_, ReadState> {
-    self.state.lock().unwrap()
+    self.state.lock().unwrap_or_else(PoisonError::into_inner)
+  }
+
+  fn wait<'a>(&self, state: MutexGuard<'a, ReadState>) -> MutexGuard<'a, ReadState> {
+    self.changed.wait(state).unwrap_or_else(PoisonError::into_inner)
   }
 }
 
-fn join(directory: &str, name: &str) -> String {
-  if directory.ends_with('/') {
-    format!("{directory}{name}")
-  } else {
-    format!("{directory}/{name}")
+#[cfg(unix)]
+fn read_dir_without_following(directory: &str) -> io::Result<Option<fs::ReadDir>> {
+  use std::os::fd::AsRawFd;
+  use std::os::unix::fs::MetadataExt;
+
+  let handle = fs::File::open(directory)?;
+  let opened = handle.metadata()?;
+  let linked = fs::symlink_metadata(directory)?;
+  if !linked.is_dir() || (linked.dev(), linked.ino()) != (opened.dev(), opened.ino()) {
+    return Ok(None);
   }
+  fs::read_dir(format!("/dev/fd/{}", handle.as_raw_fd())).map(Some)
+}
+
+#[cfg(not(unix))]
+fn read_dir_without_following(directory: &str) -> io::Result<Option<fs::ReadDir>> {
+  match fs::symlink_metadata(directory)?.is_dir() {
+    true => fs::read_dir(directory).map(Some),
+    false => Ok(None),
+  }
+}
+
+fn push_child(path: &mut String, directory: &str, name: &str) {
+  path.push_str(directory);
+  if !directory.ends_with('/') {
+    path.push('/');
+  }
+  path.push_str(name);
 }
 
 fn normalize(path: &str) -> String {
-  let absolute = path.starts_with('/');
   let mut components: Vec<&str> = Vec::new();
   for component in path.split('/') {
     match component {
       "" | "." => {}
-      ".." if components.last().is_some_and(|last| *last != "..") => {
+      ".." => {
         components.pop();
       }
-      ".." if absolute => {}
       component => components.push(component),
     }
   }
-
-  let joined = components.join("/");
-  match (absolute, joined.is_empty()) {
-    (true, _) => format!("/{joined}"),
-    (false, true) => ".".to_string(),
-    (false, false) => joined,
-  }
+  format!("/{}", components.join("/"))
 }
 
 fn walk_error(path: &str, err: io::Error) -> WalkError {
@@ -427,11 +632,22 @@ fn walk_error(path: &str, err: io::Error) -> WalkError {
 }
 
 fn epoch_millis(time: SystemTime) -> i64 {
-  let nanos = match time.duration_since(UNIX_EPOCH) {
-    Ok(duration) => duration.as_nanos() as i128,
-    Err(err) => -(err.duration().as_nanos() as i128),
+  let (seconds, nanos) = match time.duration_since(UNIX_EPOCH) {
+    Ok(after) => (after.as_secs() as f64, after.subsec_nanos()),
+    Err(err) => match err.duration() {
+      before if before.subsec_nanos() == 0 => (-(before.as_secs() as f64), 0),
+      before => (
+        -(before.as_secs() as f64) - 1.0,
+        NANOS_PER_SECOND - before.subsec_nanos(),
+      ),
+    },
   };
-  (nanos + NANOS_PER_MILLI / 2).div_euclid(NANOS_PER_MILLI) as i64
+  round_half_up(seconds * MILLIS_PER_SECOND + f64::from(nanos) / NANOS_PER_MILLI) as i64
+}
+
+fn round_half_up(value: f64) -> f64 {
+  let ceil = value.ceil();
+  if ceil - 0.5 > value { ceil - 1.0 } else { ceil }
 }
 
 #[cfg(test)]

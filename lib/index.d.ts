@@ -3,7 +3,7 @@ import type { WalkOptions, WalkOrderedOptions } from '../dist/index.js';
 export type { WalkOptions, WalkOrderedOptions } from '../dist/index.js';
 
 export type WalkError = {
-  path?: string;
+  path: string | null;
   message: string;
 };
 

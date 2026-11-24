@@ -1,9 +1,10 @@
 import { walk, walkOrdered, type WalkError, type WalkOrderedOptions } from '@immich/walkrs';
-import { readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from 'vitest';
 
 const collect = async (options: WalkOrderedOptions) => {
   const files: string[] = [];
@@ -43,6 +44,24 @@ const generateTree = () => {
 
 const threadCount = () => readdirSync('/proc/self/task').length;
 
+const touch = (times: Array<[time: string, file: string]>) =>
+  execFileSync('sh', ['-c', 'while [ $# -gt 0 ]; do touch -d "@$1" "$2"; shift 2; done', 'sh', ...times.flat()]);
+
+const randomTimes = (count: number) => {
+  let seed = 42;
+  const random = (max: number) => {
+    seed = (Math.imul(seed, 1_664_525) + 1_013_904_223) >>> 0;
+    return Math.floor((seed / 2 ** 32) * max);
+  };
+  return Array.from({ length: count }, () => {
+    const seconds = random(6_000_000_000) - 2_000_000_000;
+    const nanos = random(2) === 0 ? random(1_000_000_000) : random(1000) * 1_000_000 + 499_800 + random(400);
+    return `${seconds}.${String(nanos).padStart(9, '0')}`;
+  });
+};
+
+const withInvalidUtf8 = (prefix: string, suffix = '') => Buffer.from(`${prefix}\u00FF${suffix}`, 'latin1');
+
 const isAscending = (files: string[]) =>
   files.every((file, i) => i === 0 || Buffer.compare(Buffer.from(files[i - 1]), Buffer.from(file)) < 0);
 
@@ -61,6 +80,17 @@ describe('walkOrdered', () => {
     const actual = await collect({ paths: [tempDir] });
 
     expect(actual.files).toEqual(files.map((file) => path.join(tempDir, file)));
+  };
+
+  const expectStatTimes = async (times: string[]) => {
+    const names = times.map((_, i) => `${i}.jpg`);
+    await writeFiles(tempDir, names);
+    touch(times.map((time, i) => [time, path.join(tempDir, names[i])]));
+
+    const { files, modified } = await collect({ paths: [tempDir] });
+
+    expect(files).toHaveLength(times.length);
+    expect(modified).toEqual(files.map((file) => statSync(file).mtime.getTime()));
   };
 
   const walkPaths = async (paths: string[], options: Omit<WalkOrderedOptions, 'paths'> = {}) => {
@@ -196,6 +226,107 @@ describe('walkOrdered', () => {
       expect(files).toEqual(['/a.jpg', '/z.jpg']);
       expect(errors).toEqual([{ path: path.join(tempDir, 'restricted'), message: expect.any(String) }]);
     });
+  });
+
+  describe.skipIf(process.platform !== 'linux')('modified', () => {
+    it.each([
+      '1700000000.000499900',
+      '1700000000.000500000',
+      '1700000000.000500100',
+      '1700000000.123499900',
+      '-1000000000.000499900',
+      '-1.000500000',
+      '32503680000.000499900',
+    ])('returns the fs.stat time for %s', (time) => expectStatTimes([time]));
+
+    it('returns the fs.stat time for random nanosecond times', () => expectStatTimes(randomTimes(200)));
+  });
+
+  describe('threads', () => {
+    it.each([-1, 1e9, 0, 1.9, Number.NaN])('walks with %s threads', async (threads) => {
+      await writeFiles(tempDir, ['a.jpg', 'b/c.jpg', 'b/d/e.jpg']);
+
+      const { files, errors } = await walkPaths([''], { threads });
+
+      expect(files).toEqual(['/a.jpg', '/b/c.jpg', '/b/d/e.jpg']);
+      expect(errors).toEqual([]);
+    });
+  });
+
+  describe('paths', () => {
+    it.each(['', '.', 'lib', 'lib/a.jpg'])('rejects the relative path %j', async (relative) => {
+      await expect(collect({ paths: [tempDir, relative] })).rejects.toMatchObject({
+        code: 'InvalidArg',
+        message: expect.stringContaining(`'${relative}'`),
+      });
+    });
+  });
+
+  it('returns a wide directory in byte order', async () => {
+    const tricky = [
+      'a',
+      'a b/x.jpg',
+      'a-b/x.jpg',
+      'a.jpg',
+      'a0/x.jpg',
+      'ab',
+      'b.jpg',
+      'b/x.jpg',
+      '～/x',
+      '～.jpg',
+      '😀.jpg',
+    ];
+    const files = [...Array.from({ length: 20_000 }, (_, i) => `${i}.jpg`), ...tricky];
+    await writeFiles(tempDir, files);
+    const expected = files
+      .map((file) => path.join(tempDir, file))
+      .toSorted((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+
+    const actual = await collect({ paths: [tempDir], threads: 4 });
+
+    expect(actual.files).toEqual(expected);
+  });
+
+  it.skipIf(!existsSync('/dev/shm'))('reports names that are not UTF-8', async () => {
+    const root = await fs.mkdtemp('/dev/shm/walkrs-ordered-test-');
+    try {
+      await fs.mkdir(withInvalidUtf8(`${root}/dir`));
+      await Promise.all(
+        [
+          withInvalidUtf8(`${root}/bad`, '.jpg'),
+          withInvalidUtf8(`${root}/dir`, '/ok.jpg'),
+          path.join(root, 'good.jpg'),
+        ].map((file) => fs.writeFile(file, '')),
+      );
+
+      const { files, errors } = await collect({ paths: [root] });
+
+      expect(files).toEqual([path.join(root, 'good.jpg')]);
+      expect(errors.toSorted((a, b) => (a.path ?? '').localeCompare(b.path ?? ''))).toEqual([
+        { path: `${root}/bad\uFFFD.jpg`, message: 'Path is not valid UTF-8' },
+        { path: `${root}/dir\uFFFD`, message: 'Path is not valid UTF-8' },
+      ]);
+    } finally {
+      execFileSync('rm', ['-rf', root]);
+    }
+  });
+
+  it('types a missing error path as null', () => {
+    expectTypeOf<WalkError['path']>().toEqualTypeOf<string | null>();
+  });
+
+  it.skipIf(process.platform !== 'linux')('stops a walk without matches when returned during next', async () => {
+    const directories = Array.from({ length: 50 }, (_, i) => Array.from({ length: 100 }, (_, j) => `${i}/${j}`)).flat();
+    await Promise.all(directories.map((directory) => fs.mkdir(path.join(tempDir, directory), { recursive: true })));
+    await fs.writeFile(path.join(tempDir, 'z.jpg'), '');
+    const before = threadCount();
+    const batches = walkOrdered({ paths: [tempDir], extensions: ['jpg'], threads: 4 });
+
+    const pending = batches.next();
+    await batches.return();
+
+    await expect(pending).resolves.toEqual({ done: true, value: undefined });
+    await expect.poll(threadCount).toBeLessThanOrEqual(before);
   });
 
   it.skipIf(process.platform !== 'linux')('stops its threads when the consumer breaks early', async () => {

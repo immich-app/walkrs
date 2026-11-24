@@ -1,4 +1,4 @@
-import { walk, type WalkOptions } from '@immich/walkrs';
+import { walk, type WalkError, type WalkOptions } from '@immich/walkrs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -290,7 +290,7 @@ describe('walk', () => {
       };
 
       const entries: string[] = [];
-      const errors: Array<{ path?: string; message: string }> = [];
+      const errors: WalkError[] = [];
 
       for await (const batch of walk(options)) {
         entries.push(...batch.files);
@@ -311,7 +311,7 @@ describe('walk', () => {
       await fs.chmod(path.join(tempDir, '@eaDir'), 0o000);
 
       const files: string[] = [];
-      const errors: Array<{ path?: string; message: string }> = [];
+      const errors: WalkError[] = [];
       for await (const batch of walk({ paths: [tempDir], exclusionPatterns: ['**/@eaDir/**'] })) {
         files.push(...batch.files);
         errors.push(...batch.errors);
@@ -337,7 +337,7 @@ describe('walk', () => {
       };
 
       const files: string[] = [];
-      const errors: Array<{ path?: string; message: string }> = [];
+      const errors: WalkError[] = [];
 
       for await (const batch of walk(options)) {
         files.push(...batch.files);
