@@ -2,11 +2,13 @@ use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io;
+use std::iter::Peekable;
 use std::num::NonZero;
 use std::path::Path;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::vec;
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
@@ -22,7 +24,8 @@ const NANOS_PER_MILLI: i128 = 1_000_000;
 
 #[napi(object)]
 pub struct WalkOrderedOptions {
-  pub path: String,
+  #[napi(ts_type = "string[]")]
+  pub paths: Vec<String>,
 
   #[napi(ts_type = "boolean | undefined")]
   pub include_hidden: Option<bool>,
@@ -89,7 +92,7 @@ pub fn walk_ordered(options: WalkOrderedOptions) -> Result<WalkOrdered> {
     thread::spawn(move || reader.run());
   }
   thread::spawn(move || {
-    let _ = emit(&reader, options.path, &mut BatchSender::with_modified(tx));
+    let _ = emit(&reader, &options.paths, &mut BatchSender::with_modified(tx));
     reader.close();
   });
 
@@ -98,56 +101,57 @@ pub fn walk_ordered(options: WalkOrderedOptions) -> Result<WalkOrdered> {
   })
 }
 
-fn emit(reader: &DirectoryReader, root: String, sender: &mut BatchSender) -> std::result::Result<(), ()> {
-  let metadata = match fs::metadata(&root) {
-    Ok(metadata) => metadata,
-    Err(err) => return sender.send_error(walk_error(&root, err)),
+fn emit(reader: &DirectoryReader, paths: &[String], sender: &mut BatchSender) -> std::result::Result<(), ()> {
+  let mut walk = OrderedWalk {
+    reader,
+    roots: reader.roots(paths, sender)?.into_iter().peekable(),
+    stack: Vec::new(),
   };
 
-  if metadata.is_file() {
-    if !reader.filter.includes_file(Path::new(&root)) {
-      return Ok(());
+  while let Some(entry) = walk.next() {
+    match entry.kind {
+      EntryKind::File { modified } => sender.send_file(&entry.path, modified)?,
+      EntryKind::Directory => {
+        let listing = reader.take(entry.path);
+        for error in listing.errors {
+          sender.send_error(error)?;
+        }
+        walk.stack.push(listing.entries.into_iter());
+      }
     }
-    return match metadata.modified() {
-      Ok(modified) => sender.send_file(&root, epoch_millis(modified)),
-      Err(err) => sender.send_error(walk_error(&root, err)),
-    };
+  }
+  Ok(())
+}
+
+struct OrderedWalk<'a> {
+  reader: &'a DirectoryReader,
+  roots: Peekable<vec::IntoIter<Entry>>,
+  stack: Vec<vec::IntoIter<Entry>>,
+}
+
+impl OrderedWalk<'_> {
+  fn next(&mut self) -> Option<Entry> {
+    while self.stack.last().is_some_and(|entries| entries.len() == 0) {
+      self.stack.pop();
+    }
+
+    let listed = self.stack.last().and_then(|entries| entries.as_slice().first());
+    match self.roots.peek().map(|root| listed.map(|listed| root.cmp(listed))) {
+      Some(None | Some(Ordering::Less)) => self.next_root(),
+      Some(Some(Ordering::Equal)) => {
+        self.roots.next();
+        self.stack.last_mut()?.next()
+      }
+      None | Some(Some(Ordering::Greater)) => self.stack.last_mut()?.next(),
+    }
   }
 
-  if !metadata.is_dir() || reader.filter.skips_root(Path::new(&root)) {
-    return Ok(());
-  }
-
-  let mut stack = Vec::new();
-  reader.schedule(Entry::directory(root.clone()));
-  let mut next_directory = Some(root);
-
-  loop {
-    if let Some(directory) = next_directory.take() {
-      let listing = reader.take(directory);
-      for error in listing.errors {
-        sender.send_error(error)?;
-      }
-      stack.push(listing.entries.into_iter());
+  fn next_root(&mut self) -> Option<Entry> {
+    let root = self.roots.next()?;
+    if let EntryKind::Directory = root.kind {
+      self.reader.schedule(Entry::directory(root.path.clone()));
     }
-
-    let Some(entries) = stack.last_mut() else {
-      return Ok(());
-    };
-
-    match entries.next() {
-      None => {
-        stack.pop();
-      }
-      Some(Entry {
-        path,
-        kind: EntryKind::File { modified },
-      }) => sender.send_file(&path, modified)?,
-      Some(Entry {
-        path,
-        kind: EntryKind::Directory,
-      }) => next_directory = Some(path),
-    }
+    Some(root)
   }
 }
 
@@ -179,7 +183,7 @@ impl Entry {
   }
 
   fn sort_key(&self) -> impl Iterator<Item = u8> + '_ {
-    let separator = matches!(self.kind, EntryKind::Directory).then_some(b'/');
+    let separator = (matches!(self.kind, EntryKind::Directory) && !self.path.ends_with('/')).then_some(b'/');
     self.path.bytes().chain(separator)
   }
 }
@@ -244,6 +248,33 @@ struct DirectoryReader {
 }
 
 impl DirectoryReader {
+  fn roots(&self, paths: &[String], sender: &mut BatchSender) -> std::result::Result<Vec<Entry>, ()> {
+    let mut roots = Vec::new();
+    for path in paths.iter().map(|path| normalize(path)).collect::<BTreeSet<_>>() {
+      match self.read_root(path) {
+        Ok(Some(root)) => roots.push(root),
+        Ok(None) => {}
+        Err(error) => sender.send_error(error)?,
+      }
+    }
+    roots.sort_unstable();
+    Ok(roots)
+  }
+
+  fn read_root(&self, path: String) -> std::result::Result<Option<Entry>, WalkError> {
+    let metadata = fs::metadata(&path).map_err(|err| walk_error(&path, err))?;
+
+    if metadata.is_file() {
+      if !self.filter.includes_file(Path::new(&path)) {
+        return Ok(None);
+      }
+      let modified = metadata.modified().map_err(|err| walk_error(&path, err))?;
+      return Ok(Some(Entry::file(path, epoch_millis(modified))));
+    }
+
+    Ok((metadata.is_dir() && !self.filter.skips_root(Path::new(&path))).then(|| Entry::directory(path)))
+  }
+
   fn run(&self) {
     while let Some(directory) = self.claim() {
       let listing = self.read(&directory);
@@ -363,6 +394,28 @@ fn join(directory: &str, name: &str) -> String {
     format!("{directory}{name}")
   } else {
     format!("{directory}/{name}")
+  }
+}
+
+fn normalize(path: &str) -> String {
+  let absolute = path.starts_with('/');
+  let mut components: Vec<&str> = Vec::new();
+  for component in path.split('/') {
+    match component {
+      "" | "." => {}
+      ".." if components.last().is_some_and(|last| *last != "..") => {
+        components.pop();
+      }
+      ".." if absolute => {}
+      component => components.push(component),
+    }
+  }
+
+  let joined = components.join("/");
+  match (absolute, joined.is_empty()) {
+    (true, _) => format!("/{joined}"),
+    (false, true) => ".".to_string(),
+    (false, false) => joined,
   }
 }
 

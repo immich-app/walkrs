@@ -54,3 +54,30 @@ fn rounds_modified_times_to_the_nearest_millisecond_half_up() {
   assert_eq!(epoch_millis(before(1_000_600_000)), -1001);
   assert_eq!(epoch_millis(before(500_000)), 0);
 }
+
+#[test]
+fn normalizes_paths_lexically() {
+  let cases = [
+    ("/lib", "/lib"),
+    ("/lib/", "/lib"),
+    ("/lib//", "/lib"),
+    ("//lib/./sub/../", "/lib"),
+    ("/lib/.", "/lib"),
+    ("/..", "/"),
+    ("/", "/"),
+    ("lib/../..", ".."),
+    ("./lib", "lib"),
+    ("", "."),
+  ];
+
+  for (path, expected) in cases {
+    assert_eq!(normalize(path), expected, "{path}");
+  }
+}
+
+#[test]
+fn sorts_the_filesystem_root_before_its_hidden_children() {
+  let entries = vec![Entry::directory("/.hidden".into()), Entry::directory("/".into())];
+
+  assert_eq!(sorted(entries), ["/", "/.hidden"]);
+}

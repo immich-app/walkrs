@@ -50,7 +50,7 @@ describe('walkOrdered', () => {
   let tempDir: string;
 
   const options = () => ({
-    path: tempDir,
+    paths: [tempDir],
     exclusionPatterns: ['**/@eaDir/**', '**/*.tif'],
     extensions: ['.jpg', '.png'],
   });
@@ -58,9 +58,14 @@ describe('walkOrdered', () => {
   const expectOrder = async (files: string[]) => {
     await writeFiles(tempDir, files.toReversed());
 
-    const actual = await collect({ path: tempDir });
+    const actual = await collect({ paths: [tempDir] });
 
     expect(actual.files).toEqual(files.map((file) => path.join(tempDir, file)));
+  };
+
+  const walkPaths = async (paths: string[], options: Omit<WalkOrderedOptions, 'paths'> = {}) => {
+    const { files, errors } = await collect({ ...options, paths: paths.map((path) => tempDir + path) });
+    return { files: files.map((file) => file.slice(tempDir.length)), errors };
   };
 
   beforeEach(async () => {
@@ -81,7 +86,7 @@ describe('walkOrdered', () => {
 
     it('returns the same files as walk', async () => {
       const expected: string[] = [];
-      for await (const batch of walk({ ...options(), paths: [tempDir] })) {
+      for await (const batch of walk(options())) {
         expected.push(...batch.files);
       }
 
@@ -128,12 +133,77 @@ describe('walkOrdered', () => {
     it('returns names in UTF-8 byte order', () => expectOrder(['～.jpg', '～/a.jpg', '😀.jpg']));
   });
 
+  describe('with several paths', () => {
+    it('returns disjoint paths in byte order', async () => {
+      await writeFiles(tempDir, ['a/x.jpg', 'a-b/x.jpg', 'b/x.jpg']);
+
+      const { files } = await walkPaths(['/b', '/a', '/a-b']);
+
+      expect(files).toEqual(['/a-b/x.jpg', '/a/x.jpg', '/b/x.jpg']);
+    });
+
+    it('returns a file of nested paths once', async () => {
+      await writeFiles(tempDir, ['lib/a.jpg', 'lib/sub/b.jpg', 'lib/sub/deep/c.jpg', 'lib/z.jpg']);
+
+      const { files } = await walkPaths(['/lib/sub/deep', '/lib', '/lib/sub']);
+
+      expect(files).toEqual(['/lib/a.jpg', '/lib/sub/b.jpg', '/lib/sub/deep/c.jpg', '/lib/z.jpg']);
+    });
+
+    it.each(['/lib/.hidden', '/lib/.hidden/sub'])('returns a nested hidden path %s', async (path) => {
+      await writeFiles(tempDir, ['lib/.hidden/sub/b.jpg', 'lib/a.jpg', 'lib/z.jpg']);
+
+      const { files } = await walkPaths([path, '/lib'], { includeHidden: false });
+
+      expect(files).toEqual(['/lib/.hidden/sub/b.jpg', '/lib/a.jpg', '/lib/z.jpg']);
+    });
+
+    it.each(['**/Raw/**', '**/Raw'])('skips a nested path the exclusion %s matches', async (pattern) => {
+      await writeFiles(tempDir, ['lib/Raw/b.jpg', 'lib/a.jpg']);
+
+      const { files } = await walkPaths(['/lib/Raw', '/lib'], { exclusionPatterns: [pattern] });
+
+      expect(files).toEqual(['/lib/a.jpg']);
+    });
+
+    it.each(['/lib/', '/lib//', '/lib/sub/..', '/lib/.', '/./lib'])('walks %s as /lib', async (path) => {
+      await writeFiles(tempDir, ['lib/a.jpg', 'lib/sub/b.jpg']);
+
+      const { files } = await walkPaths([path, '/lib']);
+
+      expect(files).toEqual(['/lib/a.jpg', '/lib/sub/b.jpg']);
+    });
+
+    it('walks a path that is a symlink to a directory', async () => {
+      await writeFiles(tempDir, ['lib/a.jpg', 'target/b.jpg']);
+      await fs.symlink(path.join(tempDir, 'target'), path.join(tempDir, 'lib/link'));
+
+      const { files } = await walkPaths(['/lib', '/lib/link']);
+
+      expect(files).toEqual(['/lib/a.jpg', '/lib/link/b.jpg']);
+    });
+
+    it('returns nothing without paths', async () => {
+      await expect(collect({ paths: [] })).resolves.toEqual({ files: [], modified: [], errors: [], batches: 0 });
+    });
+
+    it.skipIf(process.getuid?.() === 0)('reports an unreadable directory of nested paths once', async () => {
+      await writeFiles(tempDir, ['a.jpg', 'restricted/b.jpg', 'z.jpg']);
+      await fs.chmod(path.join(tempDir, 'restricted'), 0o000);
+
+      const { files, errors } = await walkPaths(['', '/restricted']);
+
+      expect(files).toEqual(['/a.jpg', '/z.jpg']);
+      expect(errors).toEqual([{ path: path.join(tempDir, 'restricted'), message: expect.any(String) }]);
+    });
+  });
+
   it.skipIf(process.platform !== 'linux')('stops its threads when the consumer breaks early', async () => {
     const files = Array.from({ length: 100 }, (_, i) => Array.from({ length: 800 }, (_, j) => `${i}/${j}.jpg`)).flat();
     await writeFiles(tempDir, files);
     const before = threadCount();
 
-    for await (const batch of walkOrdered({ path: tempDir, threads: 4 })) {
+    for await (const batch of walkOrdered({ paths: [tempDir], threads: 4 })) {
       expect(batch.files.length).toBeGreaterThan(0);
       break;
     }
@@ -145,7 +215,7 @@ describe('walkOrdered', () => {
     await writeFiles(tempDir, ['a.jpg', 'restricted/b.jpg', 'z.jpg']);
     await fs.chmod(path.join(tempDir, 'restricted'), 0o000);
 
-    const { files, errors } = await collect({ path: tempDir });
+    const { files, errors } = await collect({ paths: [tempDir] });
 
     expect(files).toEqual([path.join(tempDir, 'a.jpg'), path.join(tempDir, 'z.jpg')]);
     expect(errors).toEqual([
