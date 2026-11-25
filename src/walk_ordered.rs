@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::cmp::Ordering;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fs;
 use std::io;
 use std::iter::Peekable;
@@ -23,6 +23,7 @@ const CHANNEL_CAPACITY: usize = 16;
 const READ_AHEAD_PER_THREAD: usize = 4;
 const READ_AHEAD_ENTRIES: usize = 65_536;
 const MAX_THREADS: usize = 64;
+const CHUNK_ENTRIES: usize = 512;
 const MILLIS_PER_SECOND: f64 = 1e3;
 const NANOS_PER_MILLI: f64 = 1e6;
 const NANOS_PER_SECOND: u32 = 1_000_000_000;
@@ -170,14 +171,15 @@ fn emit(reader: &DirectoryReader, sender: &mut BatchSender) -> std::result::Resu
         sender.send_file(&walk.path, modified)?;
       }
       EntryKind::Directory => {
-        let Some(listing) = reader.take(&walk.path) else {
+        let directory = DirPath::new(&walk.path);
+        let Some(listing) = reader.take(&directory) else {
           return Ok(());
         };
         for error in listing.errors {
           sender.send_error(error)?;
         }
         walk.stack.push(Level {
-          directory: walk.path.clone(),
+          directory,
           entries: listing.entries.into_iter(),
         });
       }
@@ -194,7 +196,7 @@ struct OrderedWalk<'a> {
 }
 
 struct Level {
-  directory: String,
+  directory: DirPath,
   entries: vec::IntoIter<Entry>,
 }
 
@@ -222,7 +224,7 @@ impl OrderedWalk<'_> {
   fn next_root(&mut self) -> Option<EntryKind> {
     let root = self.roots.next()?;
     if let EntryKind::Directory = root.kind {
-      self.reader.schedule(Entry::directory(root.name.clone()));
+      self.reader.schedule(DirPath::new(&root.name));
     }
     self.path.clear();
     self.path.push_str(&root.name);
@@ -233,7 +235,8 @@ impl OrderedWalk<'_> {
     let level = self.stack.last_mut()?;
     let entry = level.entries.next()?;
     self.path.clear();
-    push_child(&mut self.path, &level.directory, &entry.name);
+    self.path.push_str(&level.directory.0);
+    self.path.push_str(&entry.name);
     Some(entry.kind)
   }
 }
@@ -241,32 +244,31 @@ impl OrderedWalk<'_> {
 impl Level {
   fn peek_key(&self) -> Option<impl Iterator<Item = u8> + '_> {
     let entry = self.entries.as_slice().first()?;
-    let separator = (!self.directory.ends_with('/')).then_some(b'/');
-    Some(self.directory.bytes().chain(separator).chain(entry.sort_key()))
+    Some(self.directory.0.bytes().chain(entry.sort_key()))
   }
 }
 
 #[derive(Debug)]
-pub(crate) enum EntryKind {
+enum EntryKind {
   File { modified: i64 },
   Directory,
 }
 
 #[derive(Debug)]
-pub(crate) struct Entry {
-  pub name: Box<str>,
-  pub kind: EntryKind,
+struct Entry {
+  name: Box<str>,
+  kind: EntryKind,
 }
 
 impl Entry {
-  pub fn file(name: impl Into<Box<str>>, modified: i64) -> Self {
+  fn file(name: impl Into<Box<str>>, modified: i64) -> Self {
     Self {
       name: name.into(),
       kind: EntryKind::File { modified },
     }
   }
 
-  pub fn directory(name: impl Into<Box<str>>) -> Self {
+  fn directory(name: impl Into<Box<str>>) -> Self {
     Self {
       name: name.into(),
       kind: EntryKind::Directory,
@@ -313,63 +315,143 @@ struct Listing {
 }
 
 impl Listing {
+  fn append(&mut self, mut other: Self) {
+    self.entries.append(&mut other.entries);
+    self.errors.append(&mut other.errors);
+  }
+
   fn sort(&mut self) {
     self.entries.sort_unstable();
     self.entries.dedup();
   }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct DirPath(String);
+
+impl DirPath {
+  fn new(path: &str) -> Self {
+    Self(match path.ends_with('/') {
+      true => path.to_string(),
+      false => [path, "/"].concat(),
+    })
+  }
+
+  fn child(&self, name: &str) -> Self {
+    Self([&self.0, name, "/"].concat())
+  }
+
+  fn fs_path(&self) -> &str {
+    match self.0.len() {
+      1 => &self.0,
+      len => &self.0[..len - 1],
+    }
+  }
+}
+
+#[derive(Default)]
+enum Phase {
+  #[default]
+  Running,
+  Closed,
+  Finished,
+  Failed(String),
+}
+
 #[derive(Default)]
 struct ReadState {
-  pending: BTreeSet<Entry>,
+  pending: BTreeSet<DirPath>,
   in_flight: usize,
-  ready: HashMap<String, Listing>,
+  ready: HashMap<DirPath, Listing>,
+  chunks: VecDeque<Chunk>,
   buffered: usize,
-  wanted: Option<String>,
-  closed: bool,
-  finished: bool,
-  failure: Option<String>,
+  phase: Phase,
 }
 
 impl ReadState {
-  fn claim(&mut self, window: usize) -> Option<String> {
-    let directory = self.next_pending(window)?;
+  fn stopped(&self) -> bool {
+    !matches!(self.phase, Phase::Running)
+  }
+
+  fn claim(&mut self, window: usize) -> Option<Task> {
+    if let Some(chunk) = self.chunks.pop_front() {
+      return Some(Task::Chunk(chunk));
+    }
+    let ahead = self.in_flight + self.ready.len() < window && self.buffered < READ_AHEAD_ENTRIES;
+    let directory = ahead.then(|| self.pending.pop_first())??;
+    Some(self.start(directory))
+  }
+
+  fn claim_for(&mut self, directory: &DirPath) -> Option<Task> {
+    match self.pending.take(directory) {
+      Some(directory) => Some(self.start(directory)),
+      None => self.chunks.pop_front().map(Task::Chunk),
+    }
+  }
+
+  fn start(&mut self, directory: DirPath) -> Task {
     self.in_flight += 1;
-    Some(directory)
+    Task::Read(directory)
   }
 
-  fn next_pending(&mut self, window: usize) -> Option<String> {
-    if let Some(wanted) = &self.wanted
-      && let Some(entry) = self.pending.take(&Entry::directory(wanted.as_str()))
-    {
-      return Some(entry.name.into());
-    }
-
-    if self.in_flight + self.ready.len() >= window || self.buffered >= READ_AHEAD_ENTRIES {
-      return None;
-    }
-
-    self.pending.pop_first().map(|entry| entry.name.into())
-  }
-
-  fn finish(&mut self, directory: String, listing: Listing) {
+  fn finish(&mut self, directory: DirPath, listing: Listing) {
     self.in_flight -= 1;
-    let mut path = String::new();
-    for entry in &listing.entries {
-      if let EntryKind::Directory = entry.kind {
-        path.clear();
-        push_child(&mut path, &directory, &entry.name);
-        self.pending.insert(Entry::directory(path.as_str()));
-      }
-    }
+    let children = listing
+      .entries
+      .iter()
+      .filter(|entry| matches!(entry.kind, EntryKind::Directory));
+    self.pending.extend(children.map(|entry| directory.child(&entry.name)));
     self.buffered += listing.entries.len();
     self.ready.insert(directory, listing);
   }
 
-  fn take(&mut self, directory: &str) -> Option<Listing> {
+  fn take(&mut self, directory: &DirPath) -> Option<Listing> {
     let listing = self.ready.remove(directory)?;
     self.buffered -= listing.entries.len();
     Some(listing)
+  }
+}
+
+enum Task {
+  Read(DirPath),
+  Chunk(Chunk),
+}
+
+struct Chunk {
+  split: Arc<Split>,
+  entries: Vec<fs::DirEntry>,
+}
+
+enum Offer {
+  Taken,
+  Declined(Vec<fs::DirEntry>),
+  Stopped,
+}
+
+struct Split {
+  directory: DirPath,
+  progress: Mutex<Progress>,
+}
+
+struct Progress {
+  listing: Listing,
+  pieces: usize,
+}
+
+impl Split {
+  fn new(directory: DirPath) -> Self {
+    let progress = Progress {
+      listing: Listing::default(),
+      pieces: 1,
+    };
+    Self {
+      directory,
+      progress: Mutex::new(progress),
+    }
+  }
+
+  fn lock(&self) -> MutexGuard<'_, Progress> {
+    self.progress.lock().unwrap_or_else(PoisonError::into_inner)
   }
 }
 
@@ -409,106 +491,186 @@ impl DirectoryReader {
   }
 
   fn run(&self) {
-    while let Some(directory) = self.claim() {
-      let listing = self.read(&directory);
-      self.lock().finish(directory, listing);
-      self.changed.notify_all();
+    while let Some(task) = self.next_task() {
+      self.execute(task);
     }
   }
 
-  fn schedule(&self, directory: Entry) {
-    self.lock().pending.insert(directory);
-    self.changed.notify_all();
-  }
-
-  fn take(&self, directory: &str) -> Option<Listing> {
-    let mut state = self.lock();
-    state.wanted = Some(directory.to_string());
-    self.changed.notify_all();
-    loop {
-      if state.closed {
-        return None;
+  fn execute(&self, task: Task) {
+    match task {
+      Task::Read(directory) => self.read(directory),
+      Task::Chunk(Chunk { split, entries }) => {
+        let part = self.process(&split.directory, entries);
+        self.add(&split, part);
       }
-      if let Some(listing) = state.take(directory) {
-        state.wanted = None;
-        self.changed.notify_all();
-        return Some(listing);
-      }
-      state = self.wait(state);
     }
   }
 
-  fn finish(&self) {
-    let mut state = self.lock();
-    state.finished = true;
-    state.closed = true;
-    self.changed.notify_all();
-  }
-
-  fn close(&self) {
-    self.lock().closed = true;
-    self.changed.notify_all();
-  }
-
-  fn fail(&self, message: String) {
-    let mut state = self.lock();
-    state.failure.get_or_insert(message);
-    state.closed = true;
-    self.changed.notify_all();
-  }
-
-  fn end(&self) -> Result<()> {
-    let state = self.lock();
-    match (&state.failure, state.finished) {
-      (Some(failure), _) => Err(Error::from_reason(failure.clone())),
-      (None, false) => Err(Error::from_reason("Walk ended unexpectedly")),
-      (None, true) => Ok(()),
-    }
-  }
-
-  fn claim(&self) -> Option<String> {
-    let mut state = self.lock();
-    loop {
-      if state.closed {
-        return None;
-      }
-      if let Some(directory) = state.claim(self.window) {
-        return Some(directory);
-      }
-      state = self.wait(state);
-    }
-  }
-
-  fn read(&self, directory: &str) -> Listing {
+  fn read(&self, directory: DirPath) {
     #[cfg(test)]
-    tests::inject_panic(directory);
+    tests::inject_panic(directory.fs_path());
 
-    let mut listing = Listing::default();
-    let dir_entries = match self.open(directory) {
-      Ok(Some(dir_entries)) => dir_entries,
-      Ok(None) => return listing,
-      Err(err) => {
-        listing.errors.push(walk_error(directory, err));
-        return listing;
+    let mut split: Option<Arc<Split>> = None;
+    let mut kept = Listing::default();
+    let mut chunk = Vec::new();
+    match self.open(directory.fs_path()) {
+      Ok(dir_entries) => {
+        for dir_entry in dir_entries.into_iter().flatten() {
+          let dir_entry = match dir_entry {
+            Ok(dir_entry) => dir_entry,
+            Err(err) => {
+              kept.errors.push(walk_error(directory.fs_path(), err));
+              continue;
+            }
+          };
+          if chunk.len() == CHUNK_ENTRIES {
+            let split = split.get_or_insert_with(|| Arc::new(Split::new(directory.clone())));
+            match self.offer(split, std::mem::take(&mut chunk)) {
+              Offer::Taken => {}
+              Offer::Declined(entries) => kept.append(self.process(&directory, entries)),
+              Offer::Stopped => return,
+            }
+          }
+          chunk.push(dir_entry);
+        }
       }
-    };
+      Err(err) => kept.errors.push(walk_error(directory.fs_path(), err)),
+    }
 
-    let mut path = String::new();
-    for dir_entry in dir_entries {
-      path.clear();
-      push_child(&mut path, directory, "");
-      let result = dir_entry
-        .map_err(|err| walk_error(directory, err))
-        .and_then(|dir_entry| self.read_entry(&mut path, &dir_entry));
-      match result {
+    kept.append(self.process(&directory, chunk));
+    match split {
+      None => self.complete(directory, kept),
+      Some(split) => self.add(&split, kept),
+    }
+  }
+
+  fn offer(&self, split: &Arc<Split>, entries: Vec<fs::DirEntry>) -> Offer {
+    let mut state = self.lock();
+    if state.stopped() {
+      return Offer::Stopped;
+    }
+    if state.chunks.len() >= self.window {
+      return Offer::Declined(entries);
+    }
+    split.lock().pieces += 1;
+    state.chunks.push_back(Chunk {
+      split: Arc::clone(split),
+      entries,
+    });
+    drop(state);
+    self.changed.notify_all();
+    Offer::Taken
+  }
+
+  fn add(&self, split: &Split, part: Listing) {
+    let mut progress = split.lock();
+    progress.listing.append(part);
+    progress.pieces -= 1;
+    if progress.pieces == 0 {
+      let listing = std::mem::take(&mut progress.listing);
+      drop(progress);
+      self.complete(split.directory.clone(), listing);
+    }
+  }
+
+  fn process(&self, directory: &DirPath, entries: Vec<fs::DirEntry>) -> Listing {
+    let mut listing = Listing {
+      entries: Vec::with_capacity(entries.len()),
+      errors: Vec::new(),
+    };
+    let mut path = directory.0.clone();
+    for dir_entry in &entries {
+      path.truncate(directory.0.len());
+      match self.read_entry(&mut path, dir_entry) {
         Ok(Some(entry)) => listing.entries.push(entry),
         Ok(None) => {}
         Err(error) => listing.errors.push(error),
       }
     }
-
-    listing.sort();
     listing
+  }
+
+  fn complete(&self, directory: DirPath, mut listing: Listing) {
+    listing.sort();
+    self.lock().finish(directory, listing);
+    self.changed.notify_all();
+  }
+
+  fn schedule(&self, directory: DirPath) {
+    self.lock().pending.insert(directory);
+    self.changed.notify_all();
+  }
+
+  fn take(&self, directory: &DirPath) -> Option<Listing> {
+    let mut state = self.lock();
+    loop {
+      if state.stopped() {
+        return None;
+      }
+      if let Some(listing) = state.take(directory) {
+        drop(state);
+        self.changed.notify_all();
+        return Some(listing);
+      }
+
+      state = match state.claim_for(directory) {
+        Some(task) => {
+          drop(state);
+          self.execute(task);
+          self.lock()
+        }
+        None => self.wait(state),
+      };
+    }
+  }
+
+  fn finish(&self) {
+    self.stop(|phase| match phase {
+      Phase::Failed(_) => phase,
+      _ => Phase::Finished,
+    });
+  }
+
+  fn close(&self) {
+    self.stop(|phase| match phase {
+      Phase::Running => Phase::Closed,
+      _ => phase,
+    });
+  }
+
+  fn fail(&self, message: String) {
+    self.stop(|phase| match phase {
+      Phase::Failed(_) => phase,
+      _ => Phase::Failed(message),
+    });
+  }
+
+  fn stop(&self, next: impl FnOnce(Phase) -> Phase) {
+    let mut state = self.lock();
+    state.phase = next(std::mem::take(&mut state.phase));
+    state.chunks.clear();
+    self.changed.notify_all();
+  }
+
+  fn end(&self) -> Result<()> {
+    match &self.lock().phase {
+      Phase::Finished => Ok(()),
+      Phase::Failed(failure) => Err(Error::from_reason(failure.clone())),
+      Phase::Running | Phase::Closed => Err(Error::from_reason("Walk ended unexpectedly")),
+    }
+  }
+
+  fn next_task(&self) -> Option<Task> {
+    let mut state = self.lock();
+    loop {
+      if state.stopped() {
+        return None;
+      }
+      if let Some(task) = state.claim(self.window) {
+        return Some(task);
+      }
+      state = self.wait(state);
+    }
   }
 
   fn open(&self, directory: &str) -> io::Result<Option<fs::ReadDir>> {
@@ -544,7 +706,7 @@ impl DirectoryReader {
       });
     };
 
-    if file_type.is_dir() {
+    if let Node::Directory = node {
       return Ok(Some(Entry::directory(name)));
     }
 
@@ -584,14 +746,6 @@ fn read_dir_without_following(directory: &str) -> io::Result<Option<fs::ReadDir>
     true => fs::read_dir(directory).map(Some),
     false => Ok(None),
   }
-}
-
-fn push_child(path: &mut String, directory: &str, name: &str) {
-  path.push_str(directory);
-  if !directory.ends_with('/') {
-    path.push('/');
-  }
-  path.push_str(name);
 }
 
 fn walk_error(path: &str, err: io::Error) -> WalkError {

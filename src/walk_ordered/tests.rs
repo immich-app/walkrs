@@ -91,6 +91,19 @@ fn reader(paths: &[String]) -> DirectoryReader {
   }
 }
 
+fn read(reader: &DirectoryReader, path: &str) -> Listing {
+  let directory = DirPath::new(path);
+  reader.schedule(directory.clone());
+  reader.take(&directory).unwrap()
+}
+
+fn read_ahead(state: &mut ReadState) -> Option<String> {
+  match state.claim(100)? {
+    Task::Read(directory) => Some(directory.0),
+    Task::Chunk(_) => None,
+  }
+}
+
 fn names(entries: &[Entry]) -> Vec<&str> {
   entries.iter().map(|entry| &*entry.name).collect()
 }
@@ -209,22 +222,19 @@ fn clamps_the_thread_count() {
 #[test]
 fn stops_reading_ahead_once_the_buffered_entries_reach_the_limit() {
   let mut state = ReadState::default();
-  state.pending.insert(Entry::directory("/r/a"));
-  state.pending.insert(Entry::directory("/r/b"));
-  state.pending.insert(Entry::directory("/r/c"));
+  state.pending.extend(["/r/a", "/r/b", "/r/c"].map(DirPath::new));
   let wide = Listing {
     entries: (0..65_536).map(|i| Entry::file(format!("{i}.jpg"), 0)).collect(),
     errors: Vec::new(),
   };
 
-  let directory = state.claim(100).unwrap();
-  state.finish(directory, wide);
+  let first = DirPath::new(&read_ahead(&mut state).unwrap());
+  state.finish(first.clone(), wide);
 
-  assert_eq!(state.claim(100), None);
-  state.wanted = Some("/r/c".to_string());
-  assert_eq!(state.claim(100).as_deref(), Some("/r/c"));
-  state.take("/r/a");
-  assert_eq!(state.claim(100).as_deref(), Some("/r/b"));
+  assert_eq!(read_ahead(&mut state), None);
+  assert!(state.claim_for(&DirPath::new("/r/c")).is_some());
+  state.take(&first);
+  assert_eq!(read_ahead(&mut state).as_deref(), Some("/r/b/"));
 }
 
 #[test]
@@ -233,7 +243,7 @@ fn does_not_follow_a_directory_replaced_by_a_symlink() {
   temp.write(&["target/a.jpg"]);
   std::os::unix::fs::symlink(temp.path("target"), temp.path("link")).unwrap();
 
-  let listing = reader(&[]).read(&temp.path("link"));
+  let listing = read(&reader(&[]), &temp.path("link"));
 
   assert_eq!(names(&listing.entries), Vec::<&str>::new());
   assert_eq!(listing.errors.len(), 0);
@@ -245,7 +255,7 @@ fn follows_a_root_that_is_a_symlink() {
   temp.write(&["target/a.jpg"]);
   std::os::unix::fs::symlink(temp.path("target"), temp.path("link")).unwrap();
 
-  let listing = reader(&[temp.path("link")]).read(&temp.path("link"));
+  let listing = read(&reader(&[temp.path("link")]), &temp.path("link"));
 
   assert_eq!(names(&listing.entries), ["a.jpg"]);
 }

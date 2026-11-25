@@ -262,7 +262,7 @@ describe('walkOrdered', () => {
     });
   });
 
-  it('returns a wide directory in byte order', async () => {
+  it.each([1, 4])('returns a wide directory in byte order with %s threads', async (threads) => {
     const tricky = [
       'a',
       'a b/x.jpg',
@@ -282,7 +282,7 @@ describe('walkOrdered', () => {
       .map((file) => path.join(tempDir, file))
       .toSorted((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
 
-    const actual = await collect({ paths: [tempDir], threads: 4 });
+    const actual = await collect({ paths: [tempDir], threads });
 
     expect(actual.files).toEqual(expected);
   });
