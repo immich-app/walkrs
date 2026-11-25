@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.17](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.16...walkrs-v0.0.17) (2026-11-25)
+
+
+### Features
+
+* ordered walk ([#86](https://github.com/immich-app/walkrs/issues/86)) ([4881a04](https://github.com/immich-app/walkrs/commit/4881a047eb93873ab22160982e5a286260b2801f))
+
 ## [0.0.16](https://github.com/immich-app/walkrs/compare/walkrs-v0.0.15...walkrs-v0.0.16) (2026-11-22)
 
 
