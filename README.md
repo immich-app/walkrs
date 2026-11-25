@@ -37,6 +37,35 @@ for await (const batch of walk({
 }
 ```
 
+### Matching paths without walking
+
+`Matcher` answers whether `walkOrdered` with the same options would return a path, without touching the file system. It assumes the path is a regular file and every folder above it is a real directory.
+
+```typescript
+import { Matcher } from '@immich/walkrs';
+
+const matcher = new Matcher({
+  paths: ['/photos'],
+  exclusionPatterns: ['**/@eaDir/**', '**/Raw'],
+  extensions: ['.jpg', '.heic'],
+});
+
+matcher.includes('/photos/2020/a.jpg'); // true
+matcher.includes('/photos/Raw/a.jpg'); // false: the walk skips the Raw folder
+matcher.includesAll(['/photos/.hidden/a.jpg', '/library/a.jpg']); // [false, false]
+```
+
+Without `paths`, every folder of the path counts as below the root, so hidden and exclusion rules apply to all of them. Paths that are relative or not normalized (`//`, `.`, `..`, trailing `/`) return `false`.
+
+### Exclusion patterns
+
+- `*` and `?` stay within one path segment; `**` crosses segments.
+- Matching ignores case, for non-ASCII letters too (`**/ΚΎΠΡΟΣ/**` matches `Κύπρος`), following JavaScript's `/i` rules: `İ` does not match `i`.
+- `{a,b}` lists, `{1..12}` and `{a..e}` ranges (at most 1,000 items per pattern; zero padded ranges such as `{01..03}` are literal), `[abc]`, `[!a]` and `\` escapes.
+- A pattern ending in `/**` also excludes the folder or file it names.
+- A folder the patterns match is not entered, so nothing below it is returned.
+- Negation and extglobs are not supported: `!`, `(`, `)` and `|` are literal, so `**/*(1).jpg` matches `IMG(1).jpg`.
+
 ## Performance
 
 walkrs is designed to handle massive directory trees efficiently. It is greatly affected by multithreading: In benchmarks we have scanned 11M files in under 30 seconds over NFS on a machine with 32 CPU threads available. When restricting walkrs to a single thread, the time for the same task goes up to 208 seconds. Compare this with the single-threaded fast-glob based on nodejs which uses 360 seconds for the same task.

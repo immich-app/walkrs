@@ -1,10 +1,14 @@
 mod batch_sender;
+mod entry_filter;
 mod extension_filter;
+mod matcher;
+mod pattern;
+mod selection;
+mod walk_ordered;
 
 use std::path::Path;
 use std::sync::Arc;
 
-use globset::{GlobSet, GlobSetBuilder};
 use ignore::{DirEntry, WalkBuilder, WalkState};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
@@ -12,7 +16,9 @@ use tokio::sync::Mutex;
 use tokio::sync::mpsc::{self, Sender};
 
 use batch_sender::BatchSender;
-use extension_filter::ExtensionFilter;
+use entry_filter::EntryFilter;
+pub use matcher::{Matcher, MatcherOptions};
+pub use walk_ordered::{WalkOrdered, WalkOrderedOptions, walk_ordered};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub(crate) struct WalkError {
@@ -66,14 +72,10 @@ pub fn walk(options: WalkOptions) -> Result<Walk> {
     });
   }
 
-  let exclusion_patterns = options.exclusion_patterns.unwrap_or_default();
-  let exclusion_set = Arc::new(build_exclusion_set(&exclusion_patterns)?);
-  let directory_patterns: Vec<String> = exclusion_patterns
-    .iter()
-    .filter_map(|pattern| pattern.strip_suffix("/**").map(String::from))
-    .collect();
-  let directory_exclusion_set = Arc::new(build_exclusion_set(&directory_patterns)?);
-  let extension_set = Arc::new(ExtensionFilter::new(&options.extensions.unwrap_or_default()));
+  let filter = Arc::new(EntryFilter::new(
+    &options.exclusion_patterns.unwrap_or_default(),
+    &options.extensions.unwrap_or_default(),
+  )?);
 
   let mut walk_builder = WalkBuilder::new(&options.paths[0]);
   for path in &options.paths[1..] {
@@ -93,47 +95,16 @@ pub fn walk(options: WalkOptions) -> Result<Walk> {
 
   let walker = walk_builder.build_parallel();
 
-  std::thread::spawn(move || {
-    walker.run(|| {
-      visit(
-        tx.clone(),
-        Arc::clone(&exclusion_set),
-        Arc::clone(&directory_exclusion_set),
-        Arc::clone(&extension_set),
-      )
-    })
-  });
+  std::thread::spawn(move || walker.run(|| visit(tx.clone(), Arc::clone(&filter))));
 
   Ok(Walk {
     rx: Arc::new(Mutex::new(rx)),
   })
 }
 
-fn build_exclusion_set(exclusion_patterns: &[String]) -> Result<GlobSet> {
-  let mut builder = GlobSetBuilder::new();
-  for pattern in exclusion_patterns {
-    builder.add(
-      globset::GlobBuilder::new(pattern)
-        .case_insensitive(true)
-        .build()
-        .map_err(|e| {
-          Error::new(
-            Status::InvalidArg,
-            format!("Invalid exclusion pattern '{pattern}': {e}"),
-          )
-        })?,
-    );
-  }
-  builder
-    .build()
-    .map_err(|e| Error::new(Status::InvalidArg, format!("Failed to build exclusion patterns: {e}")))
-}
-
 fn visit(
   tx: Sender<Vec<u8>>,
-  exclusion_set: Arc<GlobSet>,
-  directory_exclusion_set: Arc<GlobSet>,
-  extension_filter: Arc<ExtensionFilter>,
+  filter: Arc<EntryFilter>,
 ) -> Box<dyn FnMut(std::result::Result<DirEntry, ignore::Error>) -> WalkState + Send> {
   let mut batch_sender = BatchSender::new(tx);
 
@@ -141,8 +112,6 @@ fn visit(
     let entry = match entry_result {
       Ok(entry) => entry,
       Err(err) => {
-        // Report the error and continue walking
-        // The error message from ignore crate already includes the path
         let error = WalkError {
           path: None,
           message: err.to_string(),
@@ -160,23 +129,16 @@ fn visit(
 
     let path: &Path = entry.path();
 
-    if ft.is_dir() && entry.depth() > 0 && directory_exclusion_set.is_match(path) {
-      return WalkState::Skip;
-    }
-
-    if exclusion_set.is_match(path) {
-      return if ft.is_dir() {
-        WalkState::Skip
+    if ft.is_dir() {
+      let skipped = if entry.depth() == 0 {
+        filter.skips_root(path)
       } else {
-        WalkState::Continue
+        filter.skips_directory(path)
       };
+      return if skipped { WalkState::Skip } else { WalkState::Continue };
     }
 
-    if !ft.is_file() {
-      return WalkState::Continue;
-    }
-
-    if !extension_filter.is_match(path) {
+    if !ft.is_file() || !filter.includes_file(path) {
       return WalkState::Continue;
     }
 

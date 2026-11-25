@@ -105,3 +105,28 @@ fn closed_receiver_returns_an_error() {
     assert_eq!(sender.flush(), Ok(()));
   }
 }
+
+#[test]
+fn sends_modified_times_aligned_with_files() {
+  let (tx, mut rx) = channel(1);
+  let mut sender = BatchSender::with_modified(tx);
+  sender.send_file("a.jpg", -1000).unwrap();
+  sender
+    .send_error(WalkError {
+      path: Some("b".into()),
+      message: "error".into(),
+    })
+    .unwrap();
+  sender.send_file("c.jpg", 1).unwrap();
+  drop(sender);
+
+  let batch: Value = serde_json::from_slice(&rx.try_recv().unwrap()).unwrap();
+  assert_eq!(
+    batch,
+    json!({
+      "files": ["a.jpg", "c.jpg"],
+      "modified": [-1000, 1],
+      "errors": [{"path": "b", "message": "error"}]
+    })
+  );
+}
